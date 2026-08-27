@@ -1,0 +1,38 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.7
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+        # Cassettes are written by the cache with a deliberate trailing newline;
+        # leave their formatting to the recorder so diffs stay meaningful.
+        exclude: ^tests/cassettes/
+      - id: trailing-whitespace
+        exclude: ^tests/cassettes/
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: mypy src
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: schemas-current
+        name: JSON Schema is current
+        entry: python -m biosemalign.schemas.export --check
+        language: system
+        pass_filenames: false
+        files: ^src/biosemalign/schemas/

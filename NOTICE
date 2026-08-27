@@ -1,0 +1,27 @@
+BioSemAlign
+Copyright 2026 Lei Wang and the BioSemAlign contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This product includes software developed for biomedical terminology alignment.
+
+BioSemAlign release artifacts do not bundle or redistribute terminology
+content. The source repository may contain response cassettes used only for
+hermetic tests; distribution-content checks exclude those cassettes from both
+the wheel and source distribution. Users are responsible for reviewing the
+terms that apply to any resource content they cache or redistribute:
+
+  * RxNorm is developed by the U.S. National Library of Medicine. NLM's
+    normalized names, identifiers, and relationships are public-domain
+    material, while some source-vocabulary content available through broader
+    UMLS/RxNorm distributions may remain proprietary.
+  * UMLS requires an authorized UMLS Metathesaurus Licence and API key.
+  * MedDRA, SNOMED CT, and other proprietary vocabularies require licences
+    obtained directly from their respective owners.
+
+See src/biosemalign/resources/registry.yaml for the packaged resource and
+licence registry, and verify current upstream terms before publication.

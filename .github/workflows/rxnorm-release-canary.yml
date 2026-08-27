@@ -1,0 +1,53 @@
+name: RxNorm release canary
+
+on:
+  schedule:
+    # RxNorm is released monthly; a weekly probe catches a change promptly
+    # without placing unnecessary load on the public NLM service.
+    - cron: "17 07 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PIP_CONSTRAINT: ${{ github.workspace }}/constraints.txt
+
+concurrency:
+  group: rxnorm-release-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install runtime package
+        run: python -m pip install -c constraints.txt -e .
+
+      - name: Probe official RxNav and compare the public gold cases
+        env:
+          BIOSEMALIGN_MODE: ONLINE
+          BIOSEMALIGN_RXNAV_BASE_URL: https://rxnav.nlm.nih.gov/REST
+        run: |
+          python scripts/rxnorm_release_canary.py \
+            --expected-release "03-Aug-2026" \
+            --report rxnorm-canary-report.json
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rxnorm-canary-report
+          path: rxnorm-canary-report.json
+          if-no-files-found: error
+          retention-days: 30

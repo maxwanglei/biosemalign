@@ -1,0 +1,94 @@
+# Knowledge Resource Registry (§20.2).
+#
+# Declares what each external resource is, what it costs legally, and where it
+# may be used. The registry is consulted before a provider is constructed, so a
+# profile that asks for a resource this environment may not use fails at
+# startup with an explanation rather than at request time with a 401.
+#
+# Licensed terminology content is never bundled into the distribution.
+
+resources:
+  - name: RxNorm
+    provider: rxnav
+    version: current
+    access_method: rest_api
+    base_url: https://rxnav.nlm.nih.gov/REST
+    license_required: false
+    license_note: >-
+      NLM's normalized RxNorm names, identifiers, and relationships are public
+      domain. Some linked source-vocabulary material available through broader
+      RxNorm/UMLS distributions can remain proprietary; review cached payloads
+      and current NLM terms before redistribution.
+    redistribution_allowed: false
+    credential_env_var: null
+    operations:
+      - search
+      - lookup
+      - approximate_match
+      - relationships
+      - history_status
+      - validate_concept
+    permitted_environments:
+      - local
+      - institutional_server
+      - hpc
+    # Not permitted in restricted enclaves by default: an outbound call from
+    # inside a controlled environment is a policy decision, not a default.
+    cache_policy: aggressive
+    rate_limit_per_second: 15
+    update_policy: monthly_release
+
+  - name: UMLS
+    provider: umls
+    version: null
+    access_method: rest_api
+    base_url: https://uts-ws.nlm.nih.gov/rest
+    license_required: true
+    license_note: >-
+      Requires an authorized UMLS Metathesaurus Licence and a UTS API key.
+      Credentials come from the environment only (§20.1).
+    redistribution_allowed: false
+    credential_env_var: BIOSEMALIGN_UMLS_API_KEY
+    operations:
+      - search
+      - lookup
+      - definitions
+      - semantic_types
+      - relationships
+    permitted_environments:
+      - local
+      - institutional_server
+      - hpc
+    cache_policy: aggressive
+    rate_limit_per_second: 20
+    update_policy: biannual_release
+    # Declared but not implemented in v0.1. The registry knows about it so that
+    # a profile requesting UMLS fails with a clear message rather than an
+    # AttributeError.
+    implemented: false
+
+  - name: OMOP
+    provider: omop
+    version: null
+    access_method: local_database
+    base_url: null
+    license_required: true
+    license_note: >-
+      OMOP vocabulary bundles inherit the licences of their source
+      vocabularies; SNOMED CT and MedDRA in particular require separate
+      agreements obtained from their owners.
+    redistribution_allowed: false
+    credential_env_var: null
+    operations:
+      - search
+      - lookup
+      - relationships
+      - ancestry
+    permitted_environments:
+      - local
+      - institutional_server
+      - hpc
+      - restricted_enclave
+    cache_policy: none
+    update_policy: on_vocabulary_refresh
+    implemented: false

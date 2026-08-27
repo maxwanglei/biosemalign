@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The suite replays committed cassettes. OFFLINE makes a cache miss an error
+  # rather than a network call, so CI cannot silently depend on RxNav being up.
+  BIOSEMALIGN_MODE: OFFLINE
+  BIOSEMALIGN_CACHE_DIR: tests/cassettes
+  # Also constrains PEP 517 build-isolation environments spawned by pip/build.
+  PIP_CONSTRAINT: ${{ github.workspace }}/constraints.txt
+
+jobs:
+  quality:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep this matrix aligned with requires-python and the classifiers in
+        # pyproject.toml. Add a version here before advertising support for it.
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: python -m pip install -c constraints.txt -e ".[dev,data]"
+
+      - name: Lint
+        if: matrix.python-version == '3.12'
+        run: |
+          ruff check src tests scripts
+          ruff format --check src tests scripts
+
+      - name: Type check
+        if: matrix.python-version == '3.12'
+        run: mypy src
+
+      - name: Schemas are current
+        if: matrix.python-version == '3.12'
+        # Any change to a root contract must arrive as a reviewable diff in
+        # docs/schemas/ rather than being noticed after dependent data exists.
+        run: python -m biosemalign.schemas.export --check
+
+      - name: Test with branch coverage gate
+        if: matrix.python-version == '3.12'
+        run: pytest --cov=biosemalign --cov-report=term-missing
+
+      - name: Test supported Python
+        if: matrix.python-version != '3.12'
+        run: pytest
+
+  distribution:
+    # Build exactly what will be published, inspect both archives, then install
+    # each artifact independently rather than relying on the source checkout.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install -c constraints.txt build
+          python -m build
+
+      - name: Guard artifact contents
+        run: python scripts/check_distribution.py dist/*.whl dist/*.tar.gz
+
+      - name: Smoke-test wheel
+        run: |
+          python -m pip install -c constraints.txt dist/*.whl
+          cd /tmp
+          biosemalign version
+          biosemalign profiles
+          python -c "from biosemalign.profiles import available_profiles; assert 'faers_drug_normalization' in available_profiles()"
+
+      - name: Verify external typing marker
+        run: |
+          python -m pip install -c constraints.txt mypy
+          cd /tmp
+          mypy --strict --follow-imports=skip \
+            -c "from biosemalign import BioSemAlign; value: type[BioSemAlign] = BioSemAlign"
+
+      - name: Smoke-test source distribution
+        run: |
+          python -m pip uninstall -y biosemalign
+          python -m pip install -c constraints.txt dist/*.tar.gz
+          cd /tmp
+          biosemalign version
+          biosemalign profiles

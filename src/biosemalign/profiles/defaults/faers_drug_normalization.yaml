@@ -1,0 +1,109 @@
+# FAERS reported drug-name normalization — the first production profile (§14).
+#
+# Maps reported product strings such as "TOPROL XL 50 MG" to RxNorm, grouping at
+# ingredient level for disproportionality analysis while reporting exactly what
+# that grouping discards.
+
+profile_name: faers_drug_normalization
+profile_version: 0.1.0
+description: >-
+  Normalize FAERS reported product names to RxNorm ingredient-level concepts for
+  pharmacovigilance signal detection, preserving product-level detail and
+  reporting semantic loss.
+
+task:
+  operation: drug_normalization
+  mapping_intent: ingredient_level_analysis
+  target_terminology: RxNorm
+  desired_granularity: ingredient
+
+input:
+  source_type: structured_field
+  default_semantic_type: drug_product
+  automatic_mention_detection: false
+  required_context: []
+  # Present in FAERS DRUG records and worth capturing, but a reported product
+  # name is still mappable without them. Names here are canonical SAU field
+  # names, not source column names — the adapter already maps role_cod to
+  # drug_role, dose_form to formulation, and so on.
+  optional_context:
+    - route
+    - drug_role
+    - indication
+    - dose
+    - formulation
+  mapping_key_context:
+    - route
+    - dose
+    - unit
+    - formulation
+
+knowledge:
+  primary_resources:
+    - RxNorm
+  secondary_resources: []
+
+  # NOTE: the design document's example profile lists `has_active_moiety`.
+  # RxNav rejects that predicate outright ("Path or Query Parameter error") —
+  # it is not in the list returned by /relatypes.json. The RxNorm relationship
+  # that carries active-moiety semantics is `has_boss` (basis of strength
+  # substance), used here instead.
+  allowed_relationships:
+    - has_ingredient
+    - has_precise_ingredient
+    - has_ingredients
+    - has_tradename
+    - has_dose_form
+    - consists_of
+    - has_boss
+
+  # Outcome-leakage guard (§6.2). During PHPT signal discovery the pipeline may
+  # use brand-to-ingredient structure but must never see drug-to-outcome
+  # associations, which would bias candidate discovery toward the hypothesis
+  # under test.
+  prohibited_relationships:
+    - associated_with_PHPT
+    - causes_hypercalcemia
+    - treats_PHPT
+    - may_treat
+    - may_prevent
+    - has_adverse_effect
+
+retrieval:
+  exact_lookup: true
+  terminology_approximate_match: true
+  lexical_retrieval: false
+  embedding_retrieval: false
+  include_historical_candidates: true
+  maximum_candidates: 10
+
+adjudication:
+  candidate_constrained: true
+  backend: deterministic
+  temperature: 0.0
+  relation_types:
+    - EXACT
+    - TARGET_BROADER_THAN_SOURCE
+    - TARGET_NARROWER_THAN_SOURCE
+    - COMPONENT_OF
+    - MULTIPLE_COMPONENTS_REQUIRED
+    - UNSUPPORTED_MAPPING
+    - INSUFFICIENT_CONTEXT
+
+validation:
+  require_active_concept: true
+  preserve_combination_ingredients: true
+  prohibit_unretrieved_identifiers: true
+  flag_salt_active_moiety_conflation: true
+
+routing:
+  exact_synonym_auto_accept: true
+  combination_products_require_review: false
+  unresolved_salt_ambiguity_requires_review: true
+  historical_candidate_requires_review: true
+  # Calibrated against the golden set: "TOPROL XL 50 MG" scores 0.75 against
+  # its RxNorm label on shared tokens and "amoxicilin" scores 0.95 against
+  # "amoxicillin" on character similarity, while "ZZZQQQ NOT A DRUG 999"
+  # scores near zero against the nearest concept RxNav will offer.
+  minimum_lexical_similarity: 0.5
+  rejection_lexical_similarity: 0.3

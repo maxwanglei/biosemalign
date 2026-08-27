@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Environment and credentials — never commit UMLS keys or service tokens (§20.1)
+.env
+.env.*
+!.env.example
+
+# Local provider cache. Note that tests/cassettes/ is a *committed* cache used
+# as the offline fixture store, and is deliberately not ignored here.
+.biosemalign_cache/
+
+# The cache's SQLite index is derived from the payload files and rebuildable.
+# Committing it would put a binary blob in the way of cassette diffs, which are
+# how an upstream terminology change becomes visible.
+index.sqlite
+
+# Data. Licensed terminology content must not enter the distribution (§20.2).
+data/
+*.parquet
+*.jsonl
+!tests/**/*.jsonl
+!examples/**/*.jsonl
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+examples/ 
+tests/
+docs/
