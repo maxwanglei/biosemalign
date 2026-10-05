@@ -1,5 +1,5 @@
 # BioSemAlign
-
+[![DOI](https://zenodo.org/badge/1347719904.svg)](https://doi.org/10.5281/zenodo.23045154)
 *A context-aware, knowledge-guided framework for biomedical mapping, coding, and translation.*
 
 BioSemAlign converts heterogeneous structured and unstructured biomedical content (biomedical concepts, e.g., drug names, disease names) inputs into
