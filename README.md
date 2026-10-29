@@ -113,6 +113,30 @@ Credentials come from the environment only, never from profile YAML — profiles
 shared between projects.
 
 
+## Development baseline (M0)
+
+The current cleaner is wrapped by
+`biosemalign.input.adapters.ExistingCleanerAdapter`. Its `clean_records()`
+method streams the existing `BatchAlignmentRecord` results, including skipped
+and failed rows. The caller configures and closes the underlying `BioSemAlign`
+instance.
+
+The offline regression suite uses invented terminology responses and blocks
+external sockets. Its expected mappings record existing behavior; they are not
+clinically validated term lists. See [the M0 inventory](docs/inventory.md),
+[policy decisions](docs/decisions.md), and [baseline reproduction](docs/baseline.md).
+
+```bash
+python -m biosemalign.schemas.export --check
+pytest --cov=biosemalign --cov-report=term-missing
+python -m examples.offline_baseline
+```
+
+Live RxNorm verification is pending until separate, independently verified public
+benchmark files are available. The manually dispatched canary skips its probe
+when those files are absent and requires an explicit expected release. Never use
+synthetic fixture identifiers as real RxNorm codes.
+
 ## Layout
 
 ```text

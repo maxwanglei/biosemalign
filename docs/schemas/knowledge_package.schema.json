@@ -1,0 +1,615 @@
+{
+  "$defs": {
+    "Authority": {
+      "description": "Knowledge authority hierarchy, highest first (§6.8).\n\nLower-authority information must not be used to silently contradict\nhigher-authority evidence. ``rank`` gives the numeric precedence.",
+      "enum": [
+        "source_input",
+        "target_terminology",
+        "official_coding_relationship",
+        "official_crosswalk",
+        "ontology_definition",
+        "umls_lexical_semantic",
+        "existing_kg_relationship",
+        "project_coding_policy",
+        "prior_expert_example",
+        "llm_internal_knowledge"
+      ],
+      "title": "Authority",
+      "type": "string"
+    },
+    "CandidateConcept": {
+      "additionalProperties": false,
+      "description": "One enriched candidate the adjudicator may choose from (§6.4, §11.3).\n\nSeveral fields here are absent from the design document and were added\nafter probing RxNav showed they are load-bearing. ``status``,\n``remapped_to`` and ``source_vocabularies`` exist because the approximate\nmatcher happily returns obsolete concepts from non-RxNorm source\nvocabularies: without them a ``NotCurrent`` MMSL hit is indistinguishable\nfrom a current RxNorm concept right up until enrichment silently returns\nnothing.",
+      "properties": {
+        "candidate_id": {
+          "description": "Identifier within the vocabulary, e.g. an RxCUI.",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "concept_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vocabulary-native class, e.g. an RxNorm TTY such as 'IN'.",
+          "title": "Concept Class"
+        },
+        "definitions": {
+          "items": {
+            "$ref": "#/$defs/Definition"
+          },
+          "title": "Definitions",
+          "type": "array"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+          "title": "Extensions",
+          "type": "object"
+        },
+        "preferred_label": {
+          "title": "Preferred Label",
+          "type": "string"
+        },
+        "relationships": {
+          "items": {
+            "$ref": "#/$defs/KnowledgeStatement"
+          },
+          "title": "Relationships",
+          "type": "array"
+        },
+        "remapped_to": {
+          "description": "Replacement identifiers when this concept was remapped.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Remapped To",
+          "type": "array"
+        },
+        "retrieval_evidence": {
+          "items": {
+            "$ref": "#/$defs/RetrievalEvidence"
+          },
+          "title": "Retrieval Evidence",
+          "type": "array"
+        },
+        "semantic_types": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Semantic Types",
+          "type": "array"
+        },
+        "source_vocabularies": {
+          "description": "Source vocabularies asserting this concept, e.g. ['RXNORM', 'MMSL'].",
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Vocabularies",
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/ConceptStatus",
+          "default": "unknown"
+        },
+        "synonyms": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Synonyms",
+          "type": "array"
+        },
+        "vocabulary": {
+          "title": "Vocabulary",
+          "type": "string"
+        },
+        "vocabulary_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vocabulary Version"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "preferred_label",
+        "vocabulary"
+      ],
+      "title": "CandidateConcept",
+      "type": "object"
+    },
+    "CodingPolicy": {
+      "additionalProperties": false,
+      "description": "A project rule the adjudicator must follow (§6.2, §14).",
+      "properties": {
+        "applies_to": {
+          "description": "Tasks or semantic types this policy governs.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Applies To",
+          "type": "array"
+        },
+        "authority": {
+          "$ref": "#/$defs/Authority",
+          "default": "project_coding_policy"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "policy_id": {
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "rule": {
+          "description": "The instruction as it should be shown to the adjudicator.",
+          "title": "Rule",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "policy_id",
+        "description",
+        "rule"
+      ],
+      "title": "CodingPolicy",
+      "type": "object"
+    },
+    "ConceptStatus": {
+      "description": "Lifecycle state of a terminology concept (§8.1).\n\nValues mirror the states RxNav's ``historystatus`` endpoint reports so the\nprovider layer does not have to lose information on the way in.",
+      "enum": [
+        "active",
+        "not_current",
+        "remapped",
+        "quantified",
+        "obsolete",
+        "never_active",
+        "unknown"
+      ],
+      "title": "ConceptStatus",
+      "type": "string"
+    },
+    "Definition": {
+      "additionalProperties": false,
+      "description": "A textual definition, with the resource that asserted it.",
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/Authority",
+          "default": "ontology_definition"
+        },
+        "source": {
+          "description": "Asserting resource, e.g. 'NCI', 'MSH', 'RxNorm'.",
+          "title": "Source",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "source"
+      ],
+      "title": "Definition",
+      "type": "object"
+    },
+    "KnowledgeConflict": {
+      "additionalProperties": false,
+      "description": "Two resources disagreeing, preserved rather than silently resolved (§6.8).",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "higher_authority": {
+          "$ref": "#/$defs/Authority"
+        },
+        "lower_authority": {
+          "$ref": "#/$defs/Authority"
+        },
+        "statements": {
+          "items": {
+            "$ref": "#/$defs/KnowledgeStatement"
+          },
+          "title": "Statements",
+          "type": "array"
+        }
+      },
+      "required": [
+        "description",
+        "higher_authority",
+        "lower_authority"
+      ],
+      "title": "KnowledgeConflict",
+      "type": "object"
+    },
+    "KnowledgeStatement": {
+      "additionalProperties": false,
+      "description": "One subject–predicate–object assertion retrieved from a resource (§6.7).",
+      "properties": {
+        "authority": {
+          "$ref": "#/$defs/Authority"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "direct": {
+          "default": true,
+          "description": "False when the statement was inferred rather than directly asserted.",
+          "title": "Direct",
+          "type": "boolean"
+        },
+        "evidence_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Type"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+          "title": "Extensions",
+          "type": "object"
+        },
+        "object_id": {
+          "title": "Object Id",
+          "type": "string"
+        },
+        "object_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Object Label"
+        },
+        "predicate": {
+          "title": "Predicate",
+          "type": "string"
+        },
+        "provenance_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provenance Note"
+        },
+        "source_resource": {
+          "description": "Resource that asserted this, e.g. 'RxNorm'.",
+          "title": "Source Resource",
+          "type": "string"
+        },
+        "subject_id": {
+          "title": "Subject Id",
+          "type": "string"
+        },
+        "subject_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subject Label"
+        }
+      },
+      "required": [
+        "subject_id",
+        "predicate",
+        "object_id",
+        "source_resource",
+        "authority"
+      ],
+      "title": "KnowledgeStatement",
+      "type": "object"
+    },
+    "ResourceMode": {
+      "description": "External-resource access policy for a run (§20.3).",
+      "enum": [
+        "ONLINE",
+        "CACHE_PREFER",
+        "FROZEN",
+        "OFFLINE"
+      ],
+      "title": "ResourceMode",
+      "type": "string"
+    },
+    "ResourceProvenance": {
+      "additionalProperties": false,
+      "description": "One external knowledge resource as it was used during this run.",
+      "properties": {
+        "accessed_at": {
+          "format": "date-time",
+          "title": "Accessed At",
+          "type": "string"
+        },
+        "api_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Version"
+        },
+        "cache_hits": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Hits",
+          "type": "integer"
+        },
+        "mode": {
+          "$ref": "#/$defs/ResourceMode",
+          "default": "ONLINE"
+        },
+        "network_calls": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Network Calls",
+          "type": "integer"
+        },
+        "provider_name": {
+          "description": "Provider implementation, e.g. 'rxnav'.",
+          "minLength": 1,
+          "title": "Provider Name",
+          "type": "string"
+        },
+        "provider_version": {
+          "description": "Version of the provider code.",
+          "minLength": 1,
+          "title": "Provider Version",
+          "type": "string"
+        },
+        "resource_name": {
+          "description": "Registry name, e.g. 'RxNorm'.",
+          "minLength": 1,
+          "title": "Resource Name",
+          "type": "string"
+        },
+        "terminology_release": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vocabulary release identifier, e.g. the RxNorm release date.",
+          "title": "Terminology Release"
+        }
+      },
+      "required": [
+        "resource_name",
+        "provider_name",
+        "provider_version"
+      ],
+      "title": "ResourceProvenance",
+      "type": "object"
+    },
+    "RetrievalChannel": {
+      "description": "Which retriever produced a candidate (§6.3).\n\nRetrieval failure and adjudication failure must be separable, so every\ncandidate records the channel that surfaced it. The split between\n``TERMINOLOGY_APPROXIMATE_CURRENT`` and ``TERMINOLOGY_APPROXIMATE_HISTORICAL``\nexists because RxNav's approximate matcher searches obsolete and\nnon-RxNorm-source concepts by default; conflating the two silently produces\ndead-end candidates that cannot be enriched.",
+      "enum": [
+        "exact_lookup",
+        "normalized_lookup",
+        "identifier_lookup",
+        "official_crosswalk",
+        "terminology_approximate_current",
+        "terminology_approximate_historical",
+        "spelling_suggestion",
+        "lexical",
+        "embedding",
+        "ontology_neighborhood"
+      ],
+      "title": "RetrievalChannel",
+      "type": "string"
+    },
+    "RetrievalEvidence": {
+      "additionalProperties": false,
+      "description": "How one retrieval channel found this candidate (§6.3).\n\nKept per-channel rather than collapsed into a single score, because\nagreement between independent channels is one of the routing features\n(§9.1) and because retrieval failure must stay measurable separately from\nadjudication failure.",
+      "properties": {
+        "channel": {
+          "$ref": "#/$defs/RetrievalChannel"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "query": {
+          "description": "The string or identifier actually sent to the provider.",
+          "title": "Query",
+          "type": "string"
+        },
+        "rank": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rank"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "source_atom_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Atom-level identifier that matched, e.g. an RxNorm RXAUI.",
+          "title": "Source Atom Id"
+        },
+        "source_vocabulary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The source vocabulary whose atom matched, e.g. 'RXNORM', 'MMSL', 'GS', 'NDDF'. A match against a non-RxNorm source atom is a weaker signal than a match against RXNORM itself and must stay distinguishable.",
+          "title": "Source Vocabulary"
+        }
+      },
+      "required": [
+        "channel",
+        "query",
+        "provider"
+      ],
+      "title": "RetrievalEvidence",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The bounded, provenance-linked evidence bundle for one SAU (§11.4).",
+  "properties": {
+    "candidates": {
+      "items": {
+        "$ref": "#/$defs/CandidateConcept"
+      },
+      "title": "Candidates",
+      "type": "array"
+    },
+    "coding_policies": {
+      "items": {
+        "$ref": "#/$defs/CodingPolicy"
+      },
+      "title": "Coding Policies",
+      "type": "array"
+    },
+    "conflicts": {
+      "items": {
+        "$ref": "#/$defs/KnowledgeConflict"
+      },
+      "title": "Conflicts",
+      "type": "array"
+    },
+    "extensions": {
+      "additionalProperties": true,
+      "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+      "title": "Extensions",
+      "type": "object"
+    },
+    "kg_guidance": {
+      "items": {
+        "$ref": "#/$defs/KnowledgeStatement"
+      },
+      "title": "Kg Guidance",
+      "type": "array"
+    },
+    "ontology_guidance": {
+      "items": {
+        "$ref": "#/$defs/KnowledgeStatement"
+      },
+      "title": "Ontology Guidance",
+      "type": "array"
+    },
+    "resource_provenance": {
+      "items": {
+        "$ref": "#/$defs/ResourceProvenance"
+      },
+      "title": "Resource Provenance",
+      "type": "array"
+    },
+    "sau_id": {
+      "title": "Sau Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": "0.2.0",
+      "description": "Version of the BioSemAlign core schema this record conforms to.",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "umls_guidance": {
+      "items": {
+        "$ref": "#/$defs/KnowledgeStatement"
+      },
+      "title": "Umls Guidance",
+      "type": "array"
+    }
+  },
+  "required": [
+    "sau_id"
+  ],
+  "title": "KnowledgePackage",
+  "type": "object",
+  "x-biosemalign-schema-version": "0.2.0"
+}

@@ -1,0 +1,967 @@
+{
+  "$defs": {
+    "AlignmentDecision": {
+      "additionalProperties": false,
+      "description": "A validated, routed, provenance-stamped mapping (§11.5).",
+      "properties": {
+        "analysis_level_concept": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelectedConcept"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "decision": {
+          "$ref": "#/$defs/DecisionType"
+        },
+        "evidence_references": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence References",
+          "type": "array"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+          "title": "Extensions",
+          "type": "object"
+        },
+        "missing_information": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Information",
+          "type": "array"
+        },
+        "preserved_attributes": {
+          "additionalProperties": true,
+          "title": "Preserved Attributes",
+          "type": "object"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "rationale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rationale"
+        },
+        "record_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Record Id"
+        },
+        "relationship_to_source": {
+          "$ref": "#/$defs/RelationshipType"
+        },
+        "routing_features": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoutingFeatures"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "routing_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Routing Reasons",
+          "type": "array"
+        },
+        "routing_status": {
+          "$ref": "#/$defs/RoutingStatus"
+        },
+        "sau_id": {
+          "title": "Sau Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "0.2.0",
+          "description": "Version of the BioSemAlign core schema this record conforms to.",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "selected_concepts": {
+          "items": {
+            "$ref": "#/$defs/SelectedConcept"
+          },
+          "title": "Selected Concepts",
+          "type": "array"
+        },
+        "semantic_loss": {
+          "items": {
+            "$ref": "#/$defs/SemanticLoss"
+          },
+          "title": "Semantic Loss",
+          "type": "array"
+        },
+        "source_level_concept": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelectedConcept"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The originally reported value, carried through so the crosswalk can be joined back to report-level source data without a second lookup (§18.3).",
+          "title": "Source Value"
+        },
+        "unsupported_inferences": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unsupported Inferences",
+          "type": "array"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationResult"
+        }
+      },
+      "required": [
+        "sau_id",
+        "decision",
+        "relationship_to_source",
+        "validation",
+        "routing_status",
+        "provenance"
+      ],
+      "title": "AlignmentDecision",
+      "type": "object"
+    },
+    "ConceptStatus": {
+      "description": "Lifecycle state of a terminology concept (§8.1).\n\nValues mirror the states RxNav's ``historystatus`` endpoint reports so the\nprovider layer does not have to lose information on the way in.",
+      "enum": [
+        "active",
+        "not_current",
+        "remapped",
+        "quantified",
+        "obsolete",
+        "never_active",
+        "unknown"
+      ],
+      "title": "ConceptStatus",
+      "type": "string"
+    },
+    "DecisionType": {
+      "description": "Top-level outcome of adjudication (§11.5).",
+      "enum": [
+        "MAPPED",
+        "MULTI_CONCEPT_MAPPED",
+        "NO_VALID_MAPPING",
+        "INSUFFICIENT_CONTEXT",
+        "ABSTAINED"
+      ],
+      "title": "DecisionType",
+      "type": "string"
+    },
+    "ErrorCategory": {
+      "description": "Failure taxonomy for evaluation and reviewer error capture (§22.2).",
+      "enum": [
+        "INPUT_ERROR",
+        "MENTION_DETECTION_ERROR",
+        "SEMANTIC_TYPING_ERROR",
+        "ATTRIBUTE_EXTRACTION_ERROR",
+        "RETRIEVAL_ERROR",
+        "KNOWLEDGE_SELECTION_ERROR",
+        "ADJUDICATION_ERROR",
+        "UNSUPPORTED_SPECIFICITY",
+        "RELATIONSHIP_CLASSIFICATION_ERROR",
+        "VALIDATION_ERROR",
+        "ROUTING_ERROR",
+        "RESOURCE_COVERAGE_GAP",
+        "INSUFFICIENT_CONTEXT"
+      ],
+      "title": "ErrorCategory",
+      "type": "string"
+    },
+    "ModelProvenance": {
+      "additionalProperties": false,
+      "description": "The adjudicator that produced the proposal.\n\nPopulated for the deterministic adjudicator too — \"which rules ran\" is as\nmuch a reproducibility question as \"which checkpoint ran\".",
+      "properties": {
+        "backend": {
+          "description": "Adjudicator backend, e.g. 'deterministic', 'vllm', 'mock'.",
+          "title": "Backend",
+          "type": "string"
+        },
+        "embedding_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Embedding Model"
+        },
+        "generation_parameters": {
+          "additionalProperties": true,
+          "title": "Generation Parameters",
+          "type": "object"
+        },
+        "model_checkpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Checkpoint"
+        },
+        "model_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Name"
+        },
+        "prompt_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Version"
+        }
+      },
+      "required": [
+        "backend"
+      ],
+      "title": "ModelProvenance",
+      "type": "object"
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "description": "Everything needed to explain or reproduce one decision (§17.3).",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+          "title": "Extensions",
+          "type": "object"
+        },
+        "human_review_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set once the record has been through AL-MedLit review.",
+          "title": "Human Review Status"
+        },
+        "identifier_hmac_key_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Non-secret fingerprint of the key used for SAU and mapping identifiers.",
+          "title": "Identifier Hmac Key Fingerprint"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "package_version": {
+          "title": "Package Version",
+          "type": "string"
+        },
+        "profile_name": {
+          "title": "Profile Name",
+          "type": "string"
+        },
+        "profile_version": {
+          "title": "Profile Version",
+          "type": "string"
+        },
+        "resources": {
+          "items": {
+            "$ref": "#/$defs/ResourceProvenance"
+          },
+          "title": "Resources",
+          "type": "array"
+        },
+        "retriever_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retriever Version"
+        },
+        "routing_policy_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Routing Policy Version"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "0.2.0",
+          "description": "Version of the BioSemAlign core schema this record conforms to.",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_adapter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Adapter"
+        },
+        "source_adapter_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Adapter Version"
+        },
+        "validation_rules_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validation Rules Version"
+        }
+      },
+      "required": [
+        "run_id",
+        "package_version",
+        "profile_name",
+        "profile_version"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "RelationshipType": {
+      "description": "How the selected target concept relates to the source (§7.3).\n\nThe values below the divider are reserved for later phenotype and\ncross-species work and are rejected by the v0.1 FAERS profile.",
+      "enum": [
+        "EXACT",
+        "TARGET_BROADER_THAN_SOURCE",
+        "TARGET_NARROWER_THAN_SOURCE",
+        "CROSS_VOCABULARY_EQUIVALENT",
+        "COMPONENT_OF",
+        "MULTIPLE_COMPONENTS_REQUIRED",
+        "RELATED_NOT_EQUIVALENT",
+        "UNSUPPORTED_MAPPING",
+        "INSUFFICIENT_CONTEXT",
+        "POTENTIAL_CLINICAL_MANIFESTATION",
+        "MECHANISTICALLY_RELATED",
+        "CROSS_SPECIES_RELATED",
+        "SPECIES_SPECIFIC"
+      ],
+      "title": "RelationshipType",
+      "type": "string"
+    },
+    "ResourceMode": {
+      "description": "External-resource access policy for a run (§20.3).",
+      "enum": [
+        "ONLINE",
+        "CACHE_PREFER",
+        "FROZEN",
+        "OFFLINE"
+      ],
+      "title": "ResourceMode",
+      "type": "string"
+    },
+    "ResourceProvenance": {
+      "additionalProperties": false,
+      "description": "One external knowledge resource as it was used during this run.",
+      "properties": {
+        "accessed_at": {
+          "format": "date-time",
+          "title": "Accessed At",
+          "type": "string"
+        },
+        "api_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Version"
+        },
+        "cache_hits": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Hits",
+          "type": "integer"
+        },
+        "mode": {
+          "$ref": "#/$defs/ResourceMode",
+          "default": "ONLINE"
+        },
+        "network_calls": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Network Calls",
+          "type": "integer"
+        },
+        "provider_name": {
+          "description": "Provider implementation, e.g. 'rxnav'.",
+          "minLength": 1,
+          "title": "Provider Name",
+          "type": "string"
+        },
+        "provider_version": {
+          "description": "Version of the provider code.",
+          "minLength": 1,
+          "title": "Provider Version",
+          "type": "string"
+        },
+        "resource_name": {
+          "description": "Registry name, e.g. 'RxNorm'.",
+          "minLength": 1,
+          "title": "Resource Name",
+          "type": "string"
+        },
+        "terminology_release": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vocabulary release identifier, e.g. the RxNorm release date.",
+          "title": "Terminology Release"
+        }
+      },
+      "required": [
+        "resource_name",
+        "provider_name",
+        "provider_version"
+      ],
+      "title": "ResourceProvenance",
+      "type": "object"
+    },
+    "RoutingFeatures": {
+      "additionalProperties": false,
+      "description": "Observable features backing the routing decision (§9.1).\n\nDeliberately excludes any self-reported model confidence: the first routing\npolicy uses only features that can be checked against the retrieved\nevidence.",
+      "properties": {
+        "channel_agreement": {
+          "default": 0,
+          "description": "Number of distinct retrieval channels that found the selection.",
+          "title": "Channel Agreement",
+          "type": "integer"
+        },
+        "concept_is_active": {
+          "default": false,
+          "title": "Concept Is Active",
+          "type": "boolean"
+        },
+        "embedding_similarity": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Embedding Similarity"
+        },
+        "exact_terminology_match": {
+          "default": false,
+          "title": "Exact Terminology Match",
+          "type": "boolean"
+        },
+        "known_difficult_pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Known Difficult Pattern"
+        },
+        "lexical_similarity": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lexical Similarity"
+        },
+        "missing_attributes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Attributes",
+          "type": "array"
+        },
+        "multiple_concepts_required": {
+          "default": false,
+          "title": "Multiple Concepts Required",
+          "type": "boolean"
+        },
+        "official_crosswalk_available": {
+          "default": false,
+          "title": "Official Crosswalk Available",
+          "type": "boolean"
+        },
+        "official_synonym_match": {
+          "default": false,
+          "title": "Official Synonym Match",
+          "type": "boolean"
+        },
+        "relationship_type": {
+          "$ref": "#/$defs/RelationshipType",
+          "default": "INSUFFICIENT_CONTEXT"
+        },
+        "retrieval_rank": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retrieval Rank"
+        },
+        "semantic_type_agreement": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Semantic Type Agreement"
+        },
+        "top_candidate_margin": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Score gap between the best and second-best candidate.",
+          "title": "Top Candidate Margin"
+        },
+        "validator_error_count": {
+          "default": 0,
+          "title": "Validator Error Count",
+          "type": "integer"
+        },
+        "validator_warning_count": {
+          "default": 0,
+          "title": "Validator Warning Count",
+          "type": "integer"
+        }
+      },
+      "title": "RoutingFeatures",
+      "type": "object"
+    },
+    "RoutingStatus": {
+      "description": "Where the decision goes next (§9.2).",
+      "enum": [
+        "AUTO_ACCEPT",
+        "HUMAN_REVIEW",
+        "ABSTAIN"
+      ],
+      "title": "RoutingStatus",
+      "type": "string"
+    },
+    "SelectedConcept": {
+      "additionalProperties": false,
+      "description": "One concept chosen from the candidate set.",
+      "properties": {
+        "concept_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Concept Class"
+        },
+        "concept_id": {
+          "title": "Concept Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "relationship_to_source": {
+          "$ref": "#/$defs/RelationshipType",
+          "default": "EXACT"
+        },
+        "status": {
+          "$ref": "#/$defs/ConceptStatus",
+          "default": "unknown"
+        },
+        "vocabulary": {
+          "title": "Vocabulary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "concept_id",
+        "label",
+        "vocabulary"
+      ],
+      "title": "SelectedConcept",
+      "type": "object"
+    },
+    "SemanticLoss": {
+      "additionalProperties": false,
+      "description": "Information discarded by mapping to a coarser concept (§8.2, goal 7).",
+      "properties": {
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/SemanticLossKind"
+        },
+        "source_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The source detail that the target concept does not carry.",
+          "title": "Source Value"
+        }
+      },
+      "required": [
+        "kind",
+        "description"
+      ],
+      "title": "SemanticLoss",
+      "type": "object"
+    },
+    "SemanticLossKind": {
+      "description": "What was dropped when a source was mapped to a coarser concept (§8.2).\n\nThe design document types ``semantic_loss`` as ``list[str]``. It is\nstructured here instead so that \"how often does ingredient-level analysis\ndiscard route?\" is a query rather than a string search.",
+      "enum": [
+        "strength",
+        "dose_form",
+        "route",
+        "salt_form",
+        "brand_identity",
+        "combination_component",
+        "specificity",
+        "assertion_status",
+        "temporality",
+        "anatomical_site",
+        "specimen",
+        "unit",
+        "other"
+      ],
+      "title": "SemanticLossKind",
+      "type": "string"
+    },
+    "Severity": {
+      "description": "Severity of a single validator finding.\n\nDistinct from :class:`ValidationStatus`, which is the verdict on the whole\nproposal: one ERROR finding forces the verdict to ``REJECTED``, while any\nnumber of INFO findings does not.",
+      "enum": [
+        "error",
+        "warning",
+        "info"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "ValidationFinding": {
+      "additionalProperties": false,
+      "description": "One thing the deterministic validator noticed.",
+      "properties": {
+        "code": {
+          "description": "Stable machine-readable code, e.g. 'UNRETRIEVED_IDENTIFIER'.",
+          "title": "Code",
+          "type": "string"
+        },
+        "concept_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Concept Id"
+        },
+        "error_category": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorCategory"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message"
+      ],
+      "title": "ValidationFinding",
+      "type": "object"
+    },
+    "ValidationResult": {
+      "additionalProperties": false,
+      "description": "The validator's verdict on a whole proposal (§8.3).",
+      "properties": {
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/ValidationFinding"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "rules_version": {
+          "title": "Rules Version",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ValidationStatus"
+        }
+      },
+      "required": [
+        "status",
+        "rules_version"
+      ],
+      "title": "ValidationResult",
+      "type": "object"
+    },
+    "ValidationStatus": {
+      "description": "Deterministic validator verdict (§8.3).",
+      "enum": [
+        "VALID",
+        "VALID_WITH_SEMANTIC_LOSS",
+        "VALID_WITH_WARNING",
+        "HUMAN_REVIEW_REQUIRED",
+        "REJECTED"
+      ],
+      "title": "ValidationStatus",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One AL-MedLit adjudication of a BioSemAlign decision (§11.6).",
+  "properties": {
+    "adjudicated_decision": {
+      "$ref": "#/$defs/AlignmentDecision"
+    },
+    "correction_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Correction Reason"
+    },
+    "error_categories": {
+      "items": {
+        "$ref": "#/$defs/ErrorCategory"
+      },
+      "title": "Error Categories",
+      "type": "array"
+    },
+    "extensions": {
+      "additionalProperties": true,
+      "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+      "title": "Extensions",
+      "type": "object"
+    },
+    "guideline_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Guideline Version"
+    },
+    "original_decision": {
+      "$ref": "#/$defs/AlignmentDecision"
+    },
+    "review_timestamp": {
+      "format": "date-time",
+      "title": "Review Timestamp",
+      "type": "string"
+    },
+    "reviewer_id": {
+      "title": "Reviewer Id",
+      "type": "string"
+    },
+    "sau_id": {
+      "title": "Sau Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": "0.2.0",
+      "description": "Version of the BioSemAlign core schema this record conforms to.",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sau_id",
+    "original_decision",
+    "adjudicated_decision",
+    "reviewer_id",
+    "review_timestamp"
+  ],
+  "title": "ReviewDecision",
+  "type": "object",
+  "x-biosemalign-schema-version": "0.2.0"
+}

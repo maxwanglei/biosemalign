@@ -1,6 +1,7 @@
 """Source adapters: structure translation only, no alignment logic (§5.3)."""
 
 from biosemalign.input.adapters.base import SourceAdapter, get_adapter, register_adapter
+from biosemalign.input.adapters.existing import ExistingCleanerAdapter
 from biosemalign.input.adapters.structured import (
     StructuredBatchAdapter,
     StructuredFieldAdapter,
@@ -9,6 +10,7 @@ from biosemalign.input.adapters.structured import (
 )
 
 __all__ = [
+    "ExistingCleanerAdapter",
     "SourceAdapter",
     "StructuredBatchAdapter",
     "StructuredFieldAdapter",

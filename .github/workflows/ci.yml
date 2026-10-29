@@ -13,10 +13,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The suite replays committed cassettes. OFFLINE makes a cache miss an error
-  # rather than a network call, so CI cannot silently depend on RxNav being up.
-  BIOSEMALIGN_MODE: OFFLINE
-  BIOSEMALIGN_CACHE_DIR: tests/cassettes
+  # Tests seed isolated synthetic release-bound caches and deny sockets.
+  # A frozen miss must fail rather than silently depend on a live provider.
+  BIOSEMALIGN_MODE: FROZEN
   # Also constrains PEP 517 build-isolation environments spawned by pip/build.
   PIP_CONSTRAINT: ${{ github.workspace }}/constraints.txt
 

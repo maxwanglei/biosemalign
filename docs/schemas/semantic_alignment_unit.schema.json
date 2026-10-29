@@ -1,0 +1,1102 @@
+{
+  "$defs": {
+    "ContextEnvelope": {
+      "additionalProperties": false,
+      "description": "Everything surrounding the mention (§5.4).\n\nStructured and free-text context share one envelope because the same SAU\nschema serves both input families; irrelevant fields simply stay ``None``.",
+      "properties": {
+        "column_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column Name"
+        },
+        "data_dictionary_definition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Dictionary Definition"
+        },
+        "date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date"
+        },
+        "document_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Type"
+        },
+        "dose": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dose"
+        },
+        "drug_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Drug Role"
+        },
+        "evidence_block_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Block Id"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+          "title": "Extensions",
+          "type": "object"
+        },
+        "field_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field Description"
+        },
+        "footnote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Footnote"
+        },
+        "indication": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Indication"
+        },
+        "neighboring_fields": {
+          "additionalProperties": true,
+          "title": "Neighboring Fields",
+          "type": "object"
+        },
+        "paragraph": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paragraph"
+        },
+        "record_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Record Id"
+        },
+        "route": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Route"
+        },
+        "section_heading": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Heading"
+        },
+        "sentence": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sentence"
+        },
+        "source_system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source System"
+        },
+        "species": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Species"
+        },
+        "study_design": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Study Design"
+        },
+        "table_caption": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Caption"
+        },
+        "table_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Name"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "title": "ContextEnvelope",
+      "type": "object"
+    },
+    "ContextualAttributes": {
+      "additionalProperties": false,
+      "description": "Modifiers asserted *about the mention* (§5.6).\n\nKept separate from concept identity on purpose. \"Suspected adrenocortical\ncarcinoma\" maps to an ACC concept with ``certainty='suspected'``; folding\nthe qualifier into the concept would silently convert a suspicion into a\nconfirmed diagnosis.\n\nSeveral names also appear on :class:`ContextEnvelope`. That is not\nduplication: the envelope records what the surrounding record said, while\nthese record what was asserted about this particular mention.",
+      "properties": {
+        "anatomical_location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Anatomical Location"
+        },
+        "assay_method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assay Method"
+        },
+        "assertion_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Assertion Status"
+        },
+        "certainty": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Certainty"
+        },
+        "dose": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dose"
+        },
+        "experimental_system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Experimental System"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+          "title": "Extensions",
+          "type": "object"
+        },
+        "formulation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Formulation"
+        },
+        "negation": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Negation"
+        },
+        "route": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Route"
+        },
+        "severity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Severity"
+        },
+        "species": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Species"
+        },
+        "specimen": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Specimen"
+        },
+        "strength": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strength"
+        },
+        "temporality": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temporality"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "title": "ContextualAttributes",
+      "type": "object"
+    },
+    "MappingTask": {
+      "additionalProperties": false,
+      "description": "What this mapping is *for*.\n\nMapping purpose and desired granularity are explicit rather than implied\n(goal 3, §3.1): \"metoprolol tartrate 50 MG oral tablet\" is the right answer\nfor product-level exposure and the wrong answer for ingredient-level signal\ndetection, and only the task can distinguish them.",
+      "properties": {
+        "desired_granularity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Requested level, e.g. 'ingredient', 'precise_ingredient'.",
+          "title": "Desired Granularity"
+        },
+        "mapping_intent": {
+          "description": "Analytical purpose, e.g. 'ingredient_level_analysis'.",
+          "title": "Mapping Intent",
+          "type": "string"
+        },
+        "operation": {
+          "description": "Task name, e.g. 'drug_normalization'.",
+          "title": "Operation",
+          "type": "string"
+        },
+        "target_terminology": {
+          "description": "Target vocabulary, e.g. 'RxNorm'.",
+          "title": "Target Terminology",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation",
+        "mapping_intent",
+        "target_terminology"
+      ],
+      "title": "MappingTask",
+      "type": "object"
+    },
+    "Mention": {
+      "additionalProperties": false,
+      "description": "The span to be mapped, plus its provisional typing (§5.5).",
+      "properties": {
+        "detection_method": {
+          "default": "user_specified",
+          "description": "How this span was identified, e.g. 'user_specified', 'profile_default'.",
+          "title": "Detection Method",
+          "type": "string"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        },
+        "normalized_text": {
+          "description": "Whitespace-collapsed, case-folded form.",
+          "title": "Normalized Text",
+          "type": "string"
+        },
+        "semantic_types": {
+          "description": "Provisional types. More than one is permitted and expected when the evidence is genuinely ambiguous (§5.5) — collapsing to a single guess here would hide the ambiguity from the adjudicator.",
+          "items": {
+            "$ref": "#/$defs/SemanticType"
+          },
+          "title": "Semantic Types",
+          "type": "array"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Character offset into the source text.",
+          "title": "Start"
+        },
+        "text": {
+          "description": "The mention exactly as it appears in the source.",
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "normalized_text"
+      ],
+      "title": "Mention",
+      "type": "object"
+    },
+    "ModelProvenance": {
+      "additionalProperties": false,
+      "description": "The adjudicator that produced the proposal.\n\nPopulated for the deterministic adjudicator too — \"which rules ran\" is as\nmuch a reproducibility question as \"which checkpoint ran\".",
+      "properties": {
+        "backend": {
+          "description": "Adjudicator backend, e.g. 'deterministic', 'vllm', 'mock'.",
+          "title": "Backend",
+          "type": "string"
+        },
+        "embedding_model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Embedding Model"
+        },
+        "generation_parameters": {
+          "additionalProperties": true,
+          "title": "Generation Parameters",
+          "type": "object"
+        },
+        "model_checkpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Checkpoint"
+        },
+        "model_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Name"
+        },
+        "prompt_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Prompt Version"
+        }
+      },
+      "required": [
+        "backend"
+      ],
+      "title": "ModelProvenance",
+      "type": "object"
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "description": "Everything needed to explain or reproduce one decision (§17.3).",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+          "title": "Extensions",
+          "type": "object"
+        },
+        "human_review_status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set once the record has been through AL-MedLit review.",
+          "title": "Human Review Status"
+        },
+        "identifier_hmac_key_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Non-secret fingerprint of the key used for SAU and mapping identifiers.",
+          "title": "Identifier Hmac Key Fingerprint"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "package_version": {
+          "title": "Package Version",
+          "type": "string"
+        },
+        "profile_name": {
+          "title": "Profile Name",
+          "type": "string"
+        },
+        "profile_version": {
+          "title": "Profile Version",
+          "type": "string"
+        },
+        "resources": {
+          "items": {
+            "$ref": "#/$defs/ResourceProvenance"
+          },
+          "title": "Resources",
+          "type": "array"
+        },
+        "retriever_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retriever Version"
+        },
+        "routing_policy_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Routing Policy Version"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": "0.2.0",
+          "description": "Version of the BioSemAlign core schema this record conforms to.",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_adapter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Adapter"
+        },
+        "source_adapter_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Adapter Version"
+        },
+        "validation_rules_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validation Rules Version"
+        }
+      },
+      "required": [
+        "run_id",
+        "package_version",
+        "profile_name",
+        "profile_version"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "ReadinessAssessment": {
+      "additionalProperties": false,
+      "description": "Whether this SAU can be mapped, and what is missing if not (§5.8).",
+      "properties": {
+        "missing_context": {
+          "description": "Context fields the profile wanted but the source did not supply.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Missing Context",
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/ReadinessStatus"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ReadinessAssessment",
+      "type": "object"
+    },
+    "ReadinessStatus": {
+      "description": "Whether an SAU carries enough information to be mapped (§5.8).",
+      "enum": [
+        "READY_FOR_MAPPING",
+        "READY_WITH_LIMITED_CONTEXT",
+        "INSUFFICIENT_CONTEXT",
+        "NEEDS_DECOMPOSITION",
+        "UNSUPPORTED_INPUT"
+      ],
+      "title": "ReadinessStatus",
+      "type": "string"
+    },
+    "ResourceMode": {
+      "description": "External-resource access policy for a run (§20.3).",
+      "enum": [
+        "ONLINE",
+        "CACHE_PREFER",
+        "FROZEN",
+        "OFFLINE"
+      ],
+      "title": "ResourceMode",
+      "type": "string"
+    },
+    "ResourceProvenance": {
+      "additionalProperties": false,
+      "description": "One external knowledge resource as it was used during this run.",
+      "properties": {
+        "accessed_at": {
+          "format": "date-time",
+          "title": "Accessed At",
+          "type": "string"
+        },
+        "api_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Version"
+        },
+        "cache_hits": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cache Hits",
+          "type": "integer"
+        },
+        "mode": {
+          "$ref": "#/$defs/ResourceMode",
+          "default": "ONLINE"
+        },
+        "network_calls": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Network Calls",
+          "type": "integer"
+        },
+        "provider_name": {
+          "description": "Provider implementation, e.g. 'rxnav'.",
+          "minLength": 1,
+          "title": "Provider Name",
+          "type": "string"
+        },
+        "provider_version": {
+          "description": "Version of the provider code.",
+          "minLength": 1,
+          "title": "Provider Version",
+          "type": "string"
+        },
+        "resource_name": {
+          "description": "Registry name, e.g. 'RxNorm'.",
+          "minLength": 1,
+          "title": "Resource Name",
+          "type": "string"
+        },
+        "terminology_release": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vocabulary release identifier, e.g. the RxNorm release date.",
+          "title": "Terminology Release"
+        }
+      },
+      "required": [
+        "resource_name",
+        "provider_name",
+        "provider_version"
+      ],
+      "title": "ResourceProvenance",
+      "type": "object"
+    },
+    "SemanticType": {
+      "description": "Provisional entity type assigned by the SAU Builder (§5.5).\n\nThis is a *provisional* typing decision, deliberately separate from concept\nidentity. Module 3 performs the final concept selection.",
+      "enum": [
+        "drug",
+        "drug_product",
+        "drug_ingredient",
+        "metabolite",
+        "disease",
+        "phenotype",
+        "clinical_finding",
+        "laboratory_test",
+        "laboratory_result",
+        "gene",
+        "protein",
+        "enzyme",
+        "assay",
+        "biological_system",
+        "anatomical_structure",
+        "procedure",
+        "species",
+        "dose",
+        "unit",
+        "temporal_expression",
+        "unknown"
+      ],
+      "title": "SemanticType",
+      "type": "string"
+    },
+    "SourceRecord": {
+      "additionalProperties": false,
+      "description": "The originating record, preserved verbatim.\n\n``raw_value`` is never normalized, trimmed, or case-folded. Downstream\nstages work on derived copies; this field is the audit anchor that lets a\nreviewer see exactly what the source system reported (§5.4, Milestone 2\nexit criterion 2).",
+      "properties": {
+        "column_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Column Name"
+        },
+        "extensions": {
+          "additionalProperties": true,
+          "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+          "title": "Extensions",
+          "type": "object"
+        },
+        "raw_value": {
+          "description": "The original value, byte-for-byte as received.",
+          "title": "Raw Value",
+          "type": "string"
+        },
+        "record_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Identifier of the source row, e.g. a FAERS primaryid.",
+          "title": "Record Id"
+        },
+        "row": {
+          "additionalProperties": true,
+          "description": "Neighbouring fields from the same record, unmodified.",
+          "title": "Row",
+          "type": "object"
+        },
+        "source_system": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Originating system, e.g. 'FAERS', 'MarketScan'.",
+          "title": "Source System"
+        },
+        "source_type": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "table_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Name"
+        }
+      },
+      "required": [
+        "source_type",
+        "raw_value"
+      ],
+      "title": "SourceRecord",
+      "type": "object"
+    },
+    "SourceType": {
+      "description": "How the caller is handing us the thing to be mapped (§5.2).",
+      "enum": [
+        "structured_field",
+        "structured_record",
+        "structured_batch",
+        "unstructured_text"
+      ],
+      "title": "SourceType",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One thing to be mapped, with its context preserved (§11.2).",
+  "properties": {
+    "attributes": {
+      "$ref": "#/$defs/ContextualAttributes"
+    },
+    "context": {
+      "$ref": "#/$defs/ContextEnvelope"
+    },
+    "extensions": {
+      "additionalProperties": true,
+      "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
+      "title": "Extensions",
+      "type": "object"
+    },
+    "mapping_key": {
+      "description": "Profile-defined, context-aware key used to reuse equivalent mappings. Unlike sau_id, this intentionally excludes source-row identity.",
+      "title": "Mapping Key",
+      "type": "string"
+    },
+    "mention": {
+      "$ref": "#/$defs/Mention"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "readiness": {
+      "$ref": "#/$defs/ReadinessAssessment"
+    },
+    "sau_id": {
+      "title": "Sau Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": "0.2.0",
+      "description": "Version of the BioSemAlign core schema this record conforms to.",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/SourceRecord"
+    },
+    "task": {
+      "$ref": "#/$defs/MappingTask"
+    }
+  },
+  "required": [
+    "sau_id",
+    "mapping_key",
+    "source",
+    "mention",
+    "context",
+    "attributes",
+    "task",
+    "provenance",
+    "readiness"
+  ],
+  "title": "SemanticAlignmentUnit",
+  "type": "object",
+  "x-biosemalign-schema-version": "0.2.0"
+}
