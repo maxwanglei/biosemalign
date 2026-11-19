@@ -124,16 +124,15 @@ def _enrich_one(
 def _target_granularity_is_evidenced(
     candidates: list[CandidateConcept], profile: TaskProfile
 ) -> bool:
-    policy = {
-        "ingredient": ("has_ingredient", {"IN"}),
-        "precise_ingredient": ("has_precise_ingredient", {"PIN"}),
-        "active_moiety": ("has_boss", {"IN", "PIN"}),
-    }.get(profile.task.desired_granularity or "")
-    if policy is None:
+    """Whether a candidate already sits at, or has an edge to, the requested level."""
+    spec = profile.target_spec()
+    granularity = profile.task.desired_granularity
+    predicate = spec.predicate(granularity)
+    if predicate is None:
         return False
-    predicate, terminal_classes = policy
+    accepted = spec.accepted_classes(granularity)
     return any(
-        candidate.concept_class in terminal_classes
+        spec.canonical_class(candidate.concept_class) in accepted
         or any(statement.predicate == predicate for statement in candidate.relationships)
         for candidate in candidates
     )

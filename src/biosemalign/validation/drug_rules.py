@@ -12,8 +12,6 @@ judgement:
 
 from __future__ import annotations
 
-import re
-
 from biosemalign.enums import (
     ErrorCategory,
     RelationshipType,
@@ -60,12 +58,17 @@ def _check_combination_integrity(
         return []
 
     candidate = package.candidate_by_qualified_id(
-        profile.task.target_terminology, source.concept_id
+        profile.task.source_vocabulary(source.vocabulary), source.concept_id
     )
     if candidate is None:
         return []
 
-    ingredients = {s.object_id for s in candidate.relationships if s.predicate == "has_ingredient"}
+    spec = profile.target_spec()
+    predicate = spec.predicate(profile.task.desired_granularity)
+    level = spec.granularity(profile.task.desired_granularity)
+    if predicate is None or level is None or level.multi != "components":
+        return []
+    ingredients = {s.object_id for s in candidate.relationships if s.predicate == predicate}
     if len(ingredients) <= 1:
         return []
 
@@ -77,7 +80,7 @@ def _check_combination_integrity(
     labels = {
         s.object_id: (s.object_label or s.object_id)
         for s in candidate.relationships
-        if s.predicate == "has_ingredient"
+        if s.predicate == predicate
     }
     return [
         ValidationFinding(
@@ -113,8 +116,14 @@ def _check_salt_conflation(
     # Precise ingredient on one side, base ingredient on the other, asserted as
     # equivalent: metoprolol succinate and metoprolol are not interchangeable
     # for formulation-sensitive analyses.
-    pair = {source.concept_class, analysis.concept_class}
-    if "PIN" in pair and "IN" in pair:
+    spec = profile.target_spec()
+    if spec.salt is None:
+        return []
+    pair = {
+        spec.canonical_class(source.concept_class),
+        spec.canonical_class(analysis.concept_class),
+    }
+    if pair & set(spec.salt.precise_classes) and pair & set(spec.salt.base_classes):
         return [
             ValidationFinding(
                 code="SALT_ACTIVE_MOIETY_CONFLATION",
@@ -129,14 +138,6 @@ def _check_salt_conflation(
             )
         ]
     return []
-
-
-_BRANDED_TTYS = {"SBD", "SBDC", "SBDF", "SBDG", "BN", "BPCK"}
-_STRENGTH_BEARING_TTYS = {"SCD", "SBD", "SCDC", "SBDC", "GPCK", "BPCK"}
-_DOSE_FORM_BEARING_TTYS = {"SCD", "SBD", "SCDF", "SBDF", "SCDG", "SBDG", "GPCK", "BPCK"}
-_STRENGTH = re.compile(
-    r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|µg|ug|g|ml|l|unit|units|iu|%)\b", re.IGNORECASE
-)
 
 
 def _check_preserved_attributes(
@@ -261,135 +262,73 @@ def _expected_losses(
     profile: TaskProfile,
     sau: SemanticAlignmentUnit | None,
 ) -> dict[SemanticLossKind, SemanticLoss]:
-    """Derive canonical loss payloads without trusting proposal prose or values."""
+    """Derive canonical loss payloads without trusting proposal prose or values.
+
+    The losses come from the target spec's rules — the same function the
+    deterministic adjudicator reports them with — applied to the bounded
+    evidence rather than to the proposal's claims.
+    """
     source = proposal.source_level_concept
     candidate = (
-        package.candidate_by_qualified_id(profile.task.target_terminology, source.concept_id)
+        package.candidate_by_qualified_id(
+            profile.task.source_vocabulary(source.vocabulary), source.concept_id
+        )
         if source is not None
         else None
     )
     if candidate is None:
-        return {
-            SemanticLossKind.SPECIFICITY: SemanticLoss(
-                kind=SemanticLossKind.SPECIFICITY,
-                description=(
-                    "target concept is broader than the source; bounded evidence does not "
-                    "identify a typed source attribute"
-                ),
-            )
-        }
+        return {SemanticLossKind.SPECIFICITY: _specificity(None)}
 
-    expected: dict[SemanticLossKind, SemanticLoss] = {}
-    tty = candidate.concept_class or ""
-    selected_ids = {concept.concept_id for concept in proposal.selected_concepts}
+    spec = profile.target_spec()
+    selected_ids = [concept.concept_id for concept in proposal.selected_concepts]
     first_target = next(iter(proposal.selected_concepts), None)
     target_evidence = (
         package.evidence_for(profile.task.target_terminology, first_target.concept_id)
         if first_target is not None
         else None
     )
-    target_label = target_evidence.label if target_evidence is not None else None
-
-    if tty in _BRANDED_TTYS:
-        brands = [
-            statement.object_label or statement.object_id
-            for statement in candidate.relationships
-            if statement.predicate == "has_tradename"
-        ]
-        expected[SemanticLossKind.BRAND_IDENTITY] = SemanticLoss(
-            kind=SemanticLossKind.BRAND_IDENTITY,
-            description="target concept is generic; brand identity is not preserved",
-            source_value=", ".join(brands) or candidate.preferred_label,
-        )
-
-    strength = _STRENGTH.search(candidate.preferred_label)
-    if strength is None and sau is not None:
-        strength = _STRENGTH.search(sau.mention.text)
-    if (
-        tty in _STRENGTH_BEARING_TTYS
-        and strength is not None
-        and (target_label is None or _STRENGTH.search(target_label) is None)
-    ):
-        expected[SemanticLossKind.STRENGTH] = SemanticLoss(
-            kind=SemanticLossKind.STRENGTH,
-            description="target concept does not carry product strength",
-            source_value=strength.group(0).strip(),
-        )
-
-    dose_forms = [
-        statement.object_label
-        for statement in candidate.relationships
-        if statement.predicate == "has_dose_form" and statement.object_label
-    ]
-    if tty in _DOSE_FORM_BEARING_TTYS and dose_forms:
-        expected[SemanticLossKind.DOSE_FORM] = SemanticLoss(
-            kind=SemanticLossKind.DOSE_FORM,
-            description="target concept does not carry dose form",
-            source_value=", ".join(dose_forms),
-        )
-
-    if tty == "PIN" and candidate.candidate_id not in selected_ids:
-        expected[SemanticLossKind.SALT_FORM] = SemanticLoss(
-            kind=SemanticLossKind.SALT_FORM,
-            description="source names a precise ingredient; target is the base ingredient",
-            source_value=candidate.preferred_label,
-        )
-    elif tty not in {"IN", "PIN"}:
-        precise = [
-            statement
-            for statement in candidate.relationships
-            if statement.predicate == "has_precise_ingredient"
-            and statement.object_id not in selected_ids
-        ]
-        if precise:
-            expected[SemanticLossKind.SALT_FORM] = SemanticLoss(
-                kind=SemanticLossKind.SALT_FORM,
-                description=(
-                    "target is the base ingredient; the source names a specific salt or "
-                    "precise ingredient, which the target does not distinguish"
-                ),
-                source_value=", ".join(
-                    statement.object_label or statement.object_id for statement in precise
-                ),
-            )
-
-    ingredients = {
-        statement.object_id
-        for statement in candidate.relationships
-        if statement.predicate == "has_ingredient"
-    }
-    if len(ingredients) > 1:
-        expected[SemanticLossKind.COMBINATION_COMPONENT] = SemanticLoss(
-            kind=SemanticLossKind.COMBINATION_COMPONENT,
-            description=(
-                "source is a combination product; it is represented by "
-                f"{len(ingredients)} separate ingredient concepts and cannot be "
-                "collapsed to one without misclassifying exposure"
-            ),
-            source_value=candidate.preferred_label,
-        )
-
     route = (
         (sau.context.route or sau.attributes.route)
         if sau is not None
         else proposal.preserved_attributes.get("route")
     )
-    if route:
-        expected[SemanticLossKind.ROUTE] = SemanticLoss(
-            kind=SemanticLossKind.ROUTE,
-            description="target concept does not carry route of administration",
-            source_value=str(route),
+    expected = {
+        loss.kind: loss
+        for loss in spec.expected_losses(
+            candidate,
+            selected_ids=selected_ids,
+            target_label=target_evidence.label if target_evidence is not None else None,
+            mention_text=sau.mention.text if sau is not None else None,
+            context={"route": route},
         )
+    }
+
+    granularity = profile.task.desired_granularity
+    predicate = spec.predicate(granularity)
+    components = {s.object_id for s in candidate.relationships if s.predicate == predicate}
+    combination = (
+        spec.combination_loss(
+            granularity, count=len(components), source_label=candidate.preferred_label
+        )
+        if len(components) > 1
+        else None
+    )
+    if combination is not None:
+        expected[combination.kind] = combination
 
     # A broader mapping necessarily loses specificity even when the package
     # does not expose a more specific typed attribute.
     if not expected:
-        expected[SemanticLossKind.SPECIFICITY] = SemanticLoss(
-            kind=SemanticLossKind.SPECIFICITY,
-            description=(
-                "target concept is broader than the source; bounded evidence does not "
-                "identify a typed source attribute"
-            ),
-            source_value=candidate.preferred_label,
-        )
+        expected[SemanticLossKind.SPECIFICITY] = _specificity(candidate.preferred_label)
     return expected
+
+
+def _specificity(source_value: str | None) -> SemanticLoss:
+    return SemanticLoss(
+        kind=SemanticLossKind.SPECIFICITY,
+        description=(
+            "target concept is broader than the source; bounded evidence does not "
+            "identify a typed source attribute"
+        ),
+        source_value=source_value,
+    )

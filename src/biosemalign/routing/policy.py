@@ -123,7 +123,12 @@ def route_decision(
             if proposal.source_level_concept is not None
             else None
         )
-        if has_unresolved_salt(package, source_id, profile.task.target_terminology):
+        source_vocabulary = profile.task.source_vocabulary(
+            proposal.source_level_concept.vocabulary
+            if proposal.source_level_concept is not None
+            else None
+        )
+        if has_unresolved_salt(package, source_id, source_vocabulary):
             reasons.append(
                 "the source names a product with more than one reachable precise "
                 "ingredient; the salt form is unresolved"
@@ -158,7 +163,14 @@ def route_decision(
             else None
         )
         source = (
-            package.candidate_by_qualified_id(profile.task.target_terminology, source_id)
+            package.candidate_by_qualified_id(
+                profile.task.source_vocabulary(
+                    proposal.source_level_concept.vocabulary
+                    if proposal.source_level_concept is not None
+                    else None
+                ),
+                source_id,
+            )
             if source_id is not None
             else None
         )

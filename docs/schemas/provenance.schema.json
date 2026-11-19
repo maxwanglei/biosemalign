@@ -1,5 +1,50 @@
 {
   "$defs": {
+    "ConcordanceState": {
+      "description": "How exact matches across vocabularies relate to one another (v0.2).\n\nAgreement is counted over independent asserting sources, not vocabularies:\na string that UMLS and RxNorm both carry because UMLS redistributes RxNorm\nis one assertion, not two.",
+      "enum": [
+        "NO_EXACT_MATCH",
+        "SINGLE_SOURCE_EXACT",
+        "MULTI_SOURCE_CONCORDANT",
+        "CROSS_VOCAB_COLLISION",
+        "EQUIVALENCE_CONFLICT"
+      ],
+      "title": "ConcordanceState",
+      "type": "string"
+    },
+    "EquivalenceGroup": {
+      "additionalProperties": false,
+      "description": "Exact matches that permitted equivalence keys resolve to one entity.",
+      "properties": {
+        "conflict": {
+          "default": false,
+          "description": "True when the group holds two codes from one vocabulary — or, when the profile names conflict vocabularies, two codes from that pool.",
+          "title": "Conflict",
+          "type": "boolean"
+        },
+        "members": {
+          "items": {
+            "$ref": "#/$defs/QualifiedCode"
+          },
+          "minItems": 1,
+          "title": "Members",
+          "type": "array"
+        },
+        "sources": {
+          "description": "Independent sources asserting the matched names, canonicalized so that a redistributed atom counts once under its originating source.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "members"
+      ],
+      "title": "EquivalenceGroup",
+      "type": "object"
+    },
     "MemoProvenance": {
       "additionalProperties": false,
       "description": "Marks a decision whose proposal and evidence were reused from the memo.",
@@ -128,6 +173,40 @@
         "version"
       ],
       "title": "OperatorProvenance",
+      "type": "object"
+    },
+    "QualifiedCode": {
+      "additionalProperties": false,
+      "description": "A concept identified by vocabulary and code, e.g. ``UNII:GEB06NHM23``.",
+      "properties": {
+        "concept_code": {
+          "minLength": 1,
+          "title": "Concept Code",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "vocabulary": {
+          "minLength": 1,
+          "title": "Vocabulary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vocabulary",
+        "concept_code"
+      ],
+      "title": "QualifiedCode",
       "type": "object"
     },
     "ResolutionTrace": {
@@ -274,8 +353,19 @@
     },
     "TierAttempt": {
       "additionalProperties": false,
-      "description": "What one tier did with an SAU, and why it passed if it did.",
+      "description": "What one tier did with an SAU, and why it passed if it did.\n\nA tier that assesses concordance also records every exact match it saw —\neach vocabulary's code, grouped by equivalence, linked to the target or\nnot. Coding is never lost when a tier passes: the final artifact carries\nonly the last tier's package, but every tier's matches stay here.",
       "properties": {
+        "concordance_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConcordanceState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "detail": {
           "anyOf": [
             {
@@ -287,6 +377,15 @@
           ],
           "default": null,
           "title": "Detail"
+        },
+        "exact_matches": {
+          "default": [],
+          "description": "Every exact match of this tier's package, grouped by equivalence.",
+          "items": {
+            "$ref": "#/$defs/EquivalenceGroup"
+          },
+          "title": "Exact Matches",
+          "type": "array"
         },
         "outcome": {
           "$ref": "#/$defs/TierOutcome"
@@ -353,6 +452,31 @@
       "additionalProperties": false,
       "description": "The complete operator configuration a decision was produced under.\n\n``workflow_id`` is a digest of everything else here, so two decisions can\nbe compared for \"same workflow\" without diffing operator lists.",
       "properties": {
+        "target_spec": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The target spec decisions followed, e.g. 'rxnorm@1.0' (v0.3).",
+          "title": "Target Spec"
+        },
+        "target_spec_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Spec Sha256"
+        },
         "tiers": {
           "items": {
             "$ref": "#/$defs/TierProvenance"

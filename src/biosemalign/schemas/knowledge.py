@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import Field, field_validator
 
 from biosemalign.enums import Authority, ConceptStatus, ConcordanceState, RetrievalChannel
 from biosemalign.schemas.base import BioSemAlignModel, ExtensibleModel, VersionedModel
+from biosemalign.schemas.codes import EquivalenceGroup, QualifiedCode
+from biosemalign.schemas.links import LinkSet
 from biosemalign.schemas.provenance import ResourceProvenance, require_unique_resources
+
+if TYPE_CHECKING:
+    from biosemalign.targets.spec import TargetSpec
 
 __all__ = [
     "CandidateConcept",
@@ -65,6 +72,13 @@ class KnowledgeStatement(ExtensibleModel):
     subject_id: str
     predicate: str
     object_id: str
+    object_vocabulary: str | None = Field(
+        default=None,
+        description=(
+            "Vocabulary of the object when it differs from the subject's, e.g. an "
+            "RxNorm ingredient of an RxNorm Extension product; None means the same."
+        ),
+    )
     subject_label: str | None = None
     object_label: str | None = None
     source_resource: str = Field(description="Resource that asserted this, e.g. 'RxNorm'.")
@@ -169,31 +183,6 @@ class KnowledgeConflict(BioSemAlignModel):
     lower_authority: Authority
 
 
-class QualifiedCode(BioSemAlignModel):
-    """A concept identified by vocabulary and code, e.g. ``UNII:GEB06NHM23``."""
-
-    vocabulary: str = Field(min_length=1)
-    concept_code: str = Field(min_length=1)
-    label: str | None = None
-
-
-class EquivalenceGroup(BioSemAlignModel):
-    """Exact matches that permitted equivalence keys resolve to one entity."""
-
-    members: list[QualifiedCode] = Field(min_length=1)
-    sources: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Independent sources asserting the matched names, canonicalized so that a "
-            "redistributed atom counts once under its originating source."
-        ),
-    )
-    conflict: bool = Field(
-        default=False,
-        description="True when the group holds two codes from one vocabulary.",
-    )
-
-
 class ConcordanceAssessment(BioSemAlignModel):
     """Cross-vocabulary agreement among exact matches for one mention (v0.2)."""
 
@@ -216,6 +205,13 @@ class KnowledgePackage(VersionedModel):
     conflicts: list[KnowledgeConflict] = Field(default_factory=list)
     resource_provenance: list[ResourceProvenance] = Field(default_factory=list)
     concordance: ConcordanceAssessment | None = None
+    links: LinkSet | None = Field(
+        default=None,
+        description=(
+            "Each exact match's links to target codes at the requested granularity, derived "
+            "by the kernel from this package (v0.3); None when concordance was not assessed."
+        ),
+    )
 
     @field_validator("resource_provenance")
     @classmethod
@@ -280,13 +276,14 @@ class KnowledgePackage(VersionedModel):
             for statement in candidate.relationships:
                 if statement.subject_id != candidate.candidate_id:
                     continue
-                key = (candidate.vocabulary.casefold(), statement.object_id)
+                object_vocabulary = statement.object_vocabulary or candidate.vocabulary
+                key = (object_vocabulary.casefold(), statement.object_id)
                 evidence = index.get(key)
                 if evidence is None:
                     evidence = ConceptEvidence(
                         concept_id=statement.object_id,
                         label=statement.object_label,
-                        vocabulary=candidate.vocabulary,
+                        vocabulary=object_vocabulary,
                         concept_class=_target_concept_class(candidate, statement),
                         status=_relationship_target_status(candidate, statement),
                         source_candidate_ids=[candidate.candidate_id],
@@ -356,35 +353,42 @@ class KnowledgePackage(VersionedModel):
 
 
 def _target_concept_class(candidate: CandidateConcept, statement: KnowledgeStatement) -> str | None:
-    if _is_release_bound_target(candidate, statement):
-        inferred = {
-            "has_ingredient": "IN",
-            "has_precise_ingredient": "PIN",
-        }.get(statement.predicate)
+    spec = _release_bound_spec(candidate, statement)
+    if spec is not None:
+        inferred = spec.inferred_class(statement.predicate)
         if inferred is not None:
             return inferred
     value = statement.extensions.get("target_tty")
     return str(value) if value is not None else None
 
 
-_RELEASE_BOUND_TARGET_PREDICATES = frozenset(
-    {"has_ingredient", "has_precise_ingredient", "has_boss"}
-)
+def _release_bound_spec(
+    candidate: CandidateConcept, statement: KnowledgeStatement
+) -> TargetSpec | None:
+    """The target spec under which an edge is canonical evidence for its target.
 
+    An official edge of a vocabulary that a built-in target spec covers, with
+    a predicate that spec declares release-bound, from and to its family — an
+    RxNorm or RxNorm Extension product's ``has_ingredient``, say. Its target
+    is then a current concept of the class the spec names.
+    """
+    from biosemalign.targets import spec_for_vocabulary
 
-def _is_release_bound_target(candidate: CandidateConcept, statement: KnowledgeStatement) -> bool:
-    """Whether a relationship is canonical terminology evidence for its target."""
-    return (
-        candidate.vocabulary.casefold() == "rxnorm"
-        and statement.predicate in _RELEASE_BOUND_TARGET_PREDICATES
-        and statement.source_resource.casefold() == "rxnorm"
-        and statement.authority is Authority.OFFICIAL_CODING_RELATIONSHIP
-    )
+    spec = spec_for_vocabulary(candidate.vocabulary)
+    if (
+        spec is None
+        or statement.authority is not Authority.OFFICIAL_CODING_RELATIONSHIP
+        or statement.predicate not in spec.release_bound_predicates
+        or not spec.in_family(statement.source_resource)
+        or not spec.in_family(statement.object_vocabulary or candidate.vocabulary)
+    ):
+        return None
+    return spec
 
 
 def _relationship_target_status(
     candidate: CandidateConcept, statement: KnowledgeStatement
 ) -> ConceptStatus:
-    if candidate.status is ConceptStatus.ACTIVE and _is_release_bound_target(candidate, statement):
+    if candidate.status is ConceptStatus.ACTIVE and _release_bound_spec(candidate, statement):
         return ConceptStatus.ACTIVE
     return ConceptStatus.UNKNOWN

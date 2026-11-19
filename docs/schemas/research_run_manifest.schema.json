@@ -262,6 +262,31 @@
       "additionalProperties": false,
       "description": "The complete operator configuration a decision was produced under.\n\n``workflow_id`` is a digest of everything else here, so two decisions can\nbe compared for \"same workflow\" without diffing operator lists.",
       "properties": {
+        "target_spec": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The target spec decisions followed, e.g. 'rxnorm@1.0' (v0.3).",
+          "title": "Target Spec"
+        },
+        "target_spec_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Spec Sha256"
+        },
         "tiers": {
           "items": {
             "$ref": "#/$defs/TierProvenance"

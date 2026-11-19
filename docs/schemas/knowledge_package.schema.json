@@ -129,6 +129,51 @@
       "title": "CandidateConcept",
       "type": "object"
     },
+    "CodeLink": {
+      "additionalProperties": false,
+      "description": "One matched code's route to one target code.",
+      "properties": {
+        "assertion_sources": {
+          "description": "Who asserted or derived the walked relationships.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Assertion Sources",
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/LinkKind"
+        },
+        "predicates": {
+          "description": "Relationships walked from ``via`` to ``target``.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Predicates",
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/QualifiedCode",
+          "description": "The matched code."
+        },
+        "target": {
+          "$ref": "#/$defs/QualifiedCode",
+          "description": "The target code at the requested granularity."
+        },
+        "via": {
+          "$ref": "#/$defs/QualifiedCode",
+          "description": "The target-family concept the source is, or is equivalent to."
+        }
+      },
+      "required": [
+        "source",
+        "via",
+        "target",
+        "kind"
+      ],
+      "title": "CodeLink",
+      "type": "object"
+    },
     "CodingPolicy": {
       "additionalProperties": false,
       "description": "A project rule the adjudicator must follow (§6.2, §14).",
@@ -265,7 +310,7 @@
       "properties": {
         "conflict": {
           "default": false,
-          "description": "True when the group holds two codes from one vocabulary.",
+          "description": "True when the group holds two codes from one vocabulary — or, when the profile names conflict vocabularies, two codes from that pool.",
           "title": "Conflict",
           "type": "boolean"
         },
@@ -381,6 +426,19 @@
           "default": null,
           "title": "Object Label"
         },
+        "object_vocabulary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vocabulary of the object when it differs from the subject's, e.g. an RxNorm ingredient of an RxNorm Extension product; None means the same.",
+          "title": "Object Vocabulary"
+        },
         "predicate": {
           "title": "Predicate",
           "type": "string"
@@ -427,6 +485,65 @@
         "authority"
       ],
       "title": "KnowledgeStatement",
+      "type": "object"
+    },
+    "LinkKind": {
+      "description": "How a matched code relates to the target code it links to (v0.3).",
+      "enum": [
+        "EQUIVALENCE",
+        "PROJECTION"
+      ],
+      "title": "LinkKind",
+      "type": "string"
+    },
+    "LinkSet": {
+      "additionalProperties": false,
+      "description": "Every matched code's links into the target, for one SAU.",
+      "properties": {
+        "ambiguous": {
+          "description": "Codes whose target-family concepts lead to different sets of targets.",
+          "items": {
+            "$ref": "#/$defs/QualifiedCode"
+          },
+          "title": "Ambiguous",
+          "type": "array"
+        },
+        "granularity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Granularity"
+        },
+        "links": {
+          "items": {
+            "$ref": "#/$defs/CodeLink"
+          },
+          "title": "Links",
+          "type": "array"
+        },
+        "target_spec": {
+          "description": "The target spec the links follow, e.g. 'rxnorm@1.0'.",
+          "title": "Target Spec",
+          "type": "string"
+        },
+        "target_spec_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "title": "Target Spec Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_spec",
+        "target_spec_sha256"
+      ],
+      "title": "LinkSet",
       "type": "object"
     },
     "QualifiedCode": {
@@ -705,6 +822,18 @@
       },
       "title": "Kg Guidance",
       "type": "array"
+    },
+    "links": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LinkSet"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Each exact match's links to target codes at the requested granularity, derived by the kernel from this package (v0.3); None when concordance was not assessed."
     },
     "ontology_guidance": {
       "items": {

@@ -15,6 +15,7 @@ from pydantic import Field, model_validator
 from biosemalign.enums import (
     ConceptStatus,
     DecisionType,
+    LinkKind,
     RelationshipType,
     RoutingStatus,
     Severity,
@@ -73,6 +74,7 @@ class AlignmentArtifact(VersionedModel):
         _validate_provenance_consistency(self)
         _validate_resolution_trace(self)
         _validate_concordance_fields(self)
+        _validate_links(self)
         if self.decision.source_value != self.sau.source.raw_value:
             raise ValueError("decision source value does not match the SAU source")
         if self.decision.record_id != self.sau.source.record_id:
@@ -177,7 +179,9 @@ def _validate_concordance_fields(artifact: AlignmentArtifact) -> None:
     expected_state = package.concordance.state if package.concordance is not None else None
     source_level = decision.source_level_concept
     expected_codes = (
-        package.equivalents_of(artifact.sau.task.target_terminology, source_level.concept_id)
+        package.equivalents_of(
+            artifact.sau.task.source_vocabulary(source_level.vocabulary), source_level.concept_id
+        )
         if source_level is not None
         else []
     )
@@ -185,6 +189,62 @@ def _validate_concordance_fields(artifact: AlignmentArtifact) -> None:
         raise ValueError("decision concordance state does not match the knowledge package")
     if decision.matched_codes != expected_codes:
         raise ValueError("decision matched codes are not the package's equivalence group")
+
+
+def _validate_links(artifact: AlignmentArtifact) -> None:
+    """The package's typed links must be what its evidence supports.
+
+    Under a built-in target spec the links are derived again and must match
+    exactly. Under another spec each link is checked against the package: its
+    source and route share an equivalence group, and a projection is an edge
+    the route concept carries.
+    """
+    package = artifact.knowledge_package
+    links = package.links
+    if links is None:
+        return
+    if links.granularity != artifact.sau.task.desired_granularity:
+        raise ValueError("package links follow a different granularity than the task")
+    from biosemalign.linking.core import derive_link_set
+    from biosemalign.targets import builtin_specs
+
+    spec = next(
+        (
+            spec
+            for spec in builtin_specs().values()
+            if spec.label == links.target_spec and spec.digest == links.target_spec_sha256
+        ),
+        None,
+    )
+    if spec is not None:
+        if derive_link_set(package, spec, links.granularity) != links:
+            raise ValueError("package links are not the links its evidence supports")
+        return
+    groups = package.concordance.groups if package.concordance is not None else []
+    for link in links.links:
+        pair = {
+            (link.source.vocabulary, link.source.concept_code),
+            (link.via.vocabulary, link.via.concept_code),
+        }
+        if not any(pair <= {(m.vocabulary, m.concept_code) for m in g.members} for g in groups):
+            raise ValueError("a package link joins codes no equivalence group joins")
+        via = package.candidate_by_qualified_id(link.via.vocabulary, link.via.concept_code)
+        if via is None:
+            raise ValueError("a package link routes through a concept absent from the package")
+        if link.kind is LinkKind.EQUIVALENCE:
+            if (link.target.vocabulary, link.target.concept_code) != (
+                via.vocabulary,
+                via.candidate_id,
+            ):
+                raise ValueError("an equivalence link must lead to its route concept")
+            continue
+        if not any(
+            statement.predicate in link.predicates
+            and (statement.object_vocabulary or via.vocabulary) == link.target.vocabulary
+            and statement.object_id == link.target.concept_code
+            for statement in via.relationships
+        ):
+            raise ValueError("a projection link rests on an edge absent from the package")
 
 
 def _validate_resolution_trace(artifact: AlignmentArtifact) -> None:
@@ -205,6 +265,17 @@ def _validate_resolution_trace(artifact: AlignmentArtifact) -> None:
         and artifact.proposal.requested_human_review
     ):
         raise ValueError("an exhausted cascade must abstain and request human review")
+    # The artifact carries the last attempted tier's package, so that tier's
+    # recorded coding must be exactly the package's concordance.
+    last = trace.attempts[-1]
+    concordance = artifact.knowledge_package.concordance
+    recorded = last.concordance_state is not None or bool(last.exact_matches)
+    if recorded and (
+        concordance is None
+        or last.concordance_state is not concordance.state
+        or list(last.exact_matches) != concordance.groups
+    ):
+        raise ValueError("the last tier's recorded exact matches differ from its package")
 
 
 def _validate_verdict(artifact: AlignmentArtifact) -> None:
@@ -260,10 +331,17 @@ def _validate_canonical_decision_concepts(artifact: AlignmentArtifact) -> None:
         if finding.code == "STATUS_VERIFIED_ACTIVE" and finding.concept_id is not None
     }
 
-    def canonical(proposed: SelectedConcept | None) -> SelectedConcept | None:
+    def canonical(
+        proposed: SelectedConcept | None, *, source: bool = False
+    ) -> SelectedConcept | None:
         if proposed is None:
             return None
-        evidence = artifact.knowledge_package.evidence_for(target_vocabulary, proposed.concept_id)
+        vocabulary = (
+            artifact.sau.task.source_vocabulary(proposed.vocabulary)
+            if source
+            else target_vocabulary
+        )
+        evidence = artifact.knowledge_package.evidence_for(vocabulary, proposed.concept_id)
         if evidence is None:
             raise ValueError("validated proposal concept is absent from canonical package evidence")
         if proposed.vocabulary.casefold() != evidence.vocabulary.casefold():
@@ -294,7 +372,9 @@ def _validate_canonical_decision_concepts(artifact: AlignmentArtifact) -> None:
     expected_selected = [canonical(concept) for concept in artifact.proposal.selected_concepts]
     if artifact.decision.selected_concepts != expected_selected:
         raise ValueError("decision selected concept metadata is not canonical package evidence")
-    if artifact.decision.source_level_concept != canonical(artifact.proposal.source_level_concept):
+    if artifact.decision.source_level_concept != canonical(
+        artifact.proposal.source_level_concept, source=True
+    ):
         raise ValueError("decision source-level concept metadata is not canonical package evidence")
     if artifact.decision.analysis_level_concept != canonical(
         artifact.proposal.analysis_level_concept
@@ -365,6 +445,17 @@ _FIELDS_ADDED_IN_0_3_0: tuple[tuple[str, ...], ...] = (
     ("decision", "provenance", "resources", "*", "content_sha256"),
     ("decision", "concordance_state"),
     ("decision", "matched_codes"),
+    ("sau", "task", "source_terminologies"),
+    ("knowledge_package", "candidates", "*", "relationships", "*", "object_vocabulary"),
+    ("knowledge_package", "ontology_guidance", "*", "object_vocabulary"),
+    ("knowledge_package", "umls_guidance", "*", "object_vocabulary"),
+    ("knowledge_package", "kg_guidance", "*", "object_vocabulary"),
+    ("knowledge_package", "conflicts", "*", "statements", "*", "object_vocabulary"),
+    ("knowledge_package", "links"),
+    ("decision", "provenance", "workflow", "target_spec"),
+    ("decision", "provenance", "workflow", "target_spec_sha256"),
+    ("sau", "provenance", "workflow", "target_spec"),
+    ("sau", "provenance", "workflow", "target_spec_sha256"),
 )
 
 

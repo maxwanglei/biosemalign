@@ -62,6 +62,62 @@ Core schema `0.3.0`. Records written under `0.2.0` still validate; new fields ar
   recording the run that first resolved the input.
 - Run manifests record the workflow, per-tier attempts, resolutions, and time, and memo hits.
 
+- Bulk coding (`biosemalign code`, `biosemalign.coding`): every exact dictionary code for every
+  term, in one set-based pass over distinct normalized terms. Every code is kept — all
+  vocabularies, linked to the target or not — with matched names, sources, and release; uncoded
+  terms are listed; each code is annotated with the target ingredients it reaches. Nothing is
+  decided.
+- Link derivation (`biosemalign lexicon link`): missing dictionary links written as build
+  overlays beside the dictionary — `has_ingredient` for precise ingredients, multiple-ingredient
+  concepts, and brand names (when all a brand's products agree); keys from FDA UNII Records,
+  MeSH registry numbers, OHDSI mappings of SNOMED and ATC, and UMLS CUIs; and product listings
+  linked only when name and composition agree. Every row names its `assertion_source`, and
+  `link_report.md` explains, with examples, everything left unlinked.
+- `biosemalign lexicon audit`: the share of each vocabulary and RxNorm-family class that reaches
+  the target's ingredients, and the full code-to-ingredient crosswalk.
+- `lexicon build` takes several `--source` directories (a dictionary plus overlays) and
+  `--no-trigram`. Relationships may carry `assertion_source`, surfaced on statements.
+- `relationship_families` in lexicon declarations (and manifests): vocabularies whose edges may
+  cross, such as RxNorm Extension products whose ingredients are RxNorm concepts. Statements name
+  the object's vocabulary (`object_vocabulary`) when it differs from the subject's.
+- `task.source_terminologies`: vocabularies besides the target a source-level concept may come
+  from. Analysis-level concepts stay in the target; validation, routing, and artifact checks
+  look a source concept up in its own permitted vocabulary.
+- `cross_vocab_concordance` option `conflict_vocabularies`: only duplicates among these (one
+  pool) make a group a conflict.
+- Resolution traces keep each tier's `concordance_state` and every exact match
+  (`exact_matches`), so codes survive when a tier passes; artifact validation checks them
+  against the package, and the crosswalk gains `exact_match_tier`, `exact_match_state`, and
+  `exact_matches`.
+- Target terminology specs (`biosemalign.targets`, v0.3 P1): the granularity model the drug
+  rules hard-coded — which classes sit at which level, the relationship that reaches it, which
+  edges are release-bound, class aliases (OMOP spellings), salt classes, and the semantic-loss
+  rules — is data in `targets/rxnorm.yaml`. The adjudicator, the validator, enrichment, routing,
+  the evidence index, the crosswalk, coding, audit, link building, and the OMOP importer all read
+  it. Loss rules are a closed set of rule types with one implementation, so the losses a mapping
+  reports and the losses validation expects can no longer drift apart. A profile names its spec
+  with `task.target_spec` (a built-in id or a YAML path), or with the new `target:` section
+  (`spec`, `terminology`, `granularity`, `source_terminologies`); by default the built-in spec of
+  the target terminology is used. `code` and `lexicon audit` take a `granularity`.
+- Coding → linking → resolution modules (v0.3 P2): `biosemalign.coding` (`Coder`, `CodeSet`, and the
+  bulk `code_terms`), `biosemalign.linking` (`Linker`, `LinkSet`, `derive_link_set`, `targets_at`),
+  and `biosemalign.resolution` (`Resolver`, `PassToNext`) name the retrieve, fuse, and propose
+  stages. Operators register under `code`, `link`, and `resolve` as well as the stage kinds, and one
+  implementing only the module method (`code`, `link`, `resolve`) is adapted; built-ins implement
+  both. Tiers accept `coding:`, `linking:`, and `resolution:` keys (stored as `retrievers`,
+  `fuser`, `proposer`). New operator names: `exact` (coder), `concordance` (linker), and
+  `concordant` (resolver, with target-neutral pass reasons `no_target_link` and
+  `non_target_code`).
+- Typed links: packages carry a `LinkSet` — each exact match's links to target codes at the
+  requested granularity, as `EQUIVALENCE` or `PROJECTION`, with predicates, assertion sources,
+  and ambiguous codes listed. The kernel derives it after its leakage filter; artifact
+  verification derives it again under a built-in spec, or checks each link against the package's
+  evidence under a custom one.
+- Workflow provenance records the target spec (`target_spec`, `target_spec_sha256`), and the spec
+  is part of `workflow_id`.
+- Bulk DuckDB work runs under a memory budget (half of physical memory, or
+  `BIOSEMALIGN_DUCKDB_MEMORY_LIMIT`) and spills to disk beyond it.
+
 ### Fixed
 
 - Abstentions now carry the SAU's preserved attributes instead of being rejected as
@@ -80,6 +136,21 @@ Core schema `0.3.0`. Records written under `0.2.0` still validate; new fields ar
 - Routing sends a mention that exactly names more than one target concept to human review instead
   of accepting whichever ranked first.
 - `crosswalk.vocabulary_release` reports the release of the decided concept's vocabulary.
+- Class aliases apply everywhere the spec is read: an OMOP-spelled class (`Quant Clinical Drug`)
+  now gets the same projection and loss rules as its RxNorm term type (`SCD`).
+- RxNorm Extension edges count as release-bound terminology evidence, like RxNorm's: a target
+  reached through one is inferred active and of the spec's class.
+- The combination-integrity check walks the requested granularity's relationship instead of
+  always `has_ingredient`; an invalid regular expression in a spec is a validation error.
+- `concordant_exact` (`0.3.0`) reads the kernel's links; the deterministic adjudicator, the
+  resolver, and link derivation share one definition of "what a concept reaches at a level"
+  (`linking.targets_at`). `biosemalign.coding` is now a package (`coding.bulk`); its imports are
+  unchanged.
+- `concordant_exact` (`0.2.0`) passes to the next tier — `no_ingredient_link`, naming the
+  identity — when the agreed identity cannot reach the requested granularity in the target
+  terminology, instead of resolving to a review-only abstention; `non_target_ingredient` when it
+  reaches only another vocabulary's ingredients. It may take its identity from
+  `task.source_terminologies`. `cross_vocab_concordance` is `0.2.0`.
 
 - `ValidationResult.rules_version` and provenance now name every validation operator, e.g.
   `0.1.0+drug_semantics@0.1.0`.

@@ -28,6 +28,7 @@ from biosemalign.exceptions import AdjudicationFailure, WorkflowViolation
 from biosemalign.knowledge.candidate_retrieval import RETRIEVER_VERSION
 from biosemalign.knowledge.package_builder import enforce_relationship_policy
 from biosemalign.knowledge.router import KnowledgeRouter
+from biosemalign.linking.core import derive_link_set
 from biosemalign.logging import get_logger
 from biosemalign.ops.base import PassToNext
 from biosemalign.pipelines.workflow import Cascade, Tier
@@ -120,7 +121,8 @@ class AlignmentKernel:
         self.knowledge = knowledge
         self.validator = validator
         self.router = router
-        self.workflow_provenance = workflow.provenance(validator.rules)
+        self.target_spec = profile.target_spec()
+        self.workflow_provenance = workflow.provenance(validator.rules, self.target_spec)
         self._clocks: dict[str, _TierClock] = {tier.name: _TierClock() for tier in workflow.tiers}
         self.memo: CrosswalkMemo | None = None
         self.memo_resources: dict[str, str | None] = {}
@@ -159,6 +161,16 @@ class AlignmentKernel:
                     "a different SAU"
                 )
             package = enforce_relationship_policy(package, self.profile)
+            # The typed links are the kernel's reading of what the linker put
+            # in the package, taken after the leakage filter so that no link
+            # rests on an edge the profile prohibits.
+            package = package.model_copy(
+                update={
+                    "links": derive_link_set(
+                        package, self.target_spec, self.profile.task.desired_granularity
+                    )
+                }
+            )
             if cache is not None:
                 cache.put(tier.name, view, package)
         return view, package
@@ -189,6 +201,7 @@ class AlignmentKernel:
             finally:
                 clock.attempts += 1
                 clock.seconds += time.perf_counter() - started
+            coded = _coding(package)
             if isinstance(result, PassToNext):
                 attempts.append(
                     TierAttempt(
@@ -196,6 +209,7 @@ class AlignmentKernel:
                         outcome=TierOutcome.PASSED,
                         reason=result.reason,
                         detail=result.detail,
+                        **coded,
                     )
                 )
                 continue
@@ -205,7 +219,7 @@ class AlignmentKernel:
                     f"{type(result).__name__}; proposers may only return an "
                     "AlignmentProposal or PassToNext"
                 )
-            attempts.append(TierAttempt(tier=tier.name, outcome=TierOutcome.RESOLVED))
+            attempts.append(TierAttempt(tier=tier.name, outcome=TierOutcome.RESOLVED, **coded))
             clock.resolved += 1
             return Resolution(
                 sau=view,
@@ -406,6 +420,16 @@ class AlignmentKernel:
             + "; ".join(f"{attempt.tier}: {attempt.reason}" for attempt in attempts),
             requested_human_review=True,
         )
+
+
+def _coding(package: KnowledgePackage) -> dict[str, Any]:
+    """What a tier's package coded: its concordance state and every exact match."""
+    if package.concordance is None:
+        return {}
+    return {
+        "concordance_state": package.concordance.state,
+        "exact_matches": tuple(group.model_copy(deep=True) for group in package.concordance.groups),
+    }
 
 
 def _blank(field_name: str) -> object:

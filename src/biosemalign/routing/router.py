@@ -73,10 +73,13 @@ class DecisionRouter:
             package,
             validation,
             target_vocabulary=self.profile.task.target_terminology,
+            source_vocabulary=self.profile.task.source_vocabulary(
+                proposal.source_level_concept.vocabulary
+                if proposal.source_level_concept is not None
+                else None
+            ),
         )
-        concordance_state, matched_codes = decision_concordance(
-            package, source_level, target_vocabulary=self.profile.task.target_terminology
-        )
+        concordance_state, matched_codes = decision_concordance(package, source_level)
         if status is RoutingStatus.AUTO_ACCEPT and self.calibration is not None:
             status, reasons = self._calibrated(features, concordance_state, provenance, reasons)
         rejected = validation.status is ValidationStatus.REJECTED
@@ -165,14 +168,15 @@ class DecisionRouter:
 def decision_concordance(
     package: KnowledgePackage,
     source_level: SelectedConcept | None,
-    *,
-    target_vocabulary: str,
 ) -> tuple[ConcordanceState | None, list[QualifiedCode]]:
-    """The decision's concordance fields, derived from canonical package evidence."""
+    """The decision's concordance fields, derived from canonical package evidence.
+
+    ``source_level`` is already canonical, so its vocabulary is the package's.
+    """
     state = package.concordance.state if package.concordance is not None else None
     if source_level is None:
         return state, []
-    return state, package.equivalents_of(target_vocabulary, source_level.concept_id)
+    return state, package.equivalents_of(source_level.vocabulary, source_level.concept_id)
 
 
 def _canonical_decision_concepts(
@@ -181,6 +185,7 @@ def _canonical_decision_concepts(
     validation: ValidationResult,
     *,
     target_vocabulary: str,
+    source_vocabulary: str,
 ) -> tuple[list[SelectedConcept], SelectedConcept | None, SelectedConcept | None]:
     """Return evidence-owned metadata and suppress rejected mapping claims."""
     if validation.status is ValidationStatus.REJECTED:
@@ -192,12 +197,13 @@ def _canonical_decision_concepts(
         if finding.code == "STATUS_VERIFIED_ACTIVE" and finding.concept_id is not None
     }
     evidence_index = package.qualified_concept_evidence_index()
-    canonical_vocabulary = target_vocabulary.casefold()
 
-    def canonical(concept: SelectedConcept | None) -> SelectedConcept | None:
+    def canonical(
+        concept: SelectedConcept | None, vocabulary: str = target_vocabulary
+    ) -> SelectedConcept | None:
         if concept is None:
             return None
-        evidence = evidence_index.get((canonical_vocabulary, concept.concept_id))
+        evidence = evidence_index.get((vocabulary.casefold(), concept.concept_id))
         if evidence is None:
             # This is reachable only for profiles that explicitly disable the
             # unretrieved-identifier guard. Keep the claim out of a final
@@ -223,7 +229,7 @@ def _canonical_decision_concepts(
             selected.append(item)
     return (
         selected,
-        canonical(proposal.source_level_concept),
+        canonical(proposal.source_level_concept, source_vocabulary),
         canonical(proposal.analysis_level_concept),
     )
 

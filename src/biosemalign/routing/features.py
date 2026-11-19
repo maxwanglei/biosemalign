@@ -18,10 +18,6 @@ from biosemalign.util import lexical_similarity, normalize_text
 __all__ = ["extract_features", "has_unresolved_salt"]
 
 
-#: Term types that are already at ingredient granularity.
-_INGREDIENT_LEVEL_TTYS = {"IN", "PIN"}
-
-
 def has_unresolved_salt(
     package: KnowledgePackage,
     concept_id: str | None,
@@ -43,9 +39,18 @@ def has_unresolved_salt(
     )
     if candidate is None:
         return False
-    if candidate.concept_class in _INGREDIENT_LEVEL_TTYS:
+    # Which classes are already salt-level, and which edge names a salt, are
+    # the target spec's — found from the candidate's vocabulary, so that an
+    # artifact re-derives the same feature without its profile.
+    from biosemalign.targets import spec_for_vocabulary
+
+    spec = spec_for_vocabulary(candidate.vocabulary)
+    if spec is None or spec.salt is None:
         return False
-    return len(set(candidate.related_ids("has_precise_ingredient"))) > 1
+    ingredient_level = set(spec.salt.precise_classes) | set(spec.salt.base_classes)
+    if spec.canonical_class(candidate.concept_class) in ingredient_level:
+        return False
+    return len(set(candidate.related_ids(spec.salt.precise_predicate))) > 1
 
 
 def extract_features(
@@ -58,7 +63,12 @@ def extract_features(
     """Assemble the feature vector behind the routing decision."""
     source_level = proposal.source_level_concept
     target_vocabulary = sau.task.target_terminology
-    source_candidate = _selected_source_candidate(package, proposal, target_vocabulary)
+    source_vocabulary = sau.task.source_vocabulary(
+        source_level.vocabulary if source_level is not None else None
+    )
+    source_candidate = _selected_source_candidate(
+        package, proposal, target_vocabulary, source_vocabulary
+    )
 
     exact_match = False
     synonym_match = False
@@ -128,11 +138,12 @@ def _selected_source_candidate(
     package: KnowledgePackage,
     proposal: AlignmentProposal,
     target_vocabulary: str,
+    source_vocabulary: str,
 ) -> CandidateConcept | None:
     """Return the directly retrieved candidate the proposal actually used."""
     if proposal.source_level_concept is not None:
         candidate = package.candidate_by_qualified_id(
-            target_vocabulary, proposal.source_level_concept.concept_id
+            source_vocabulary, proposal.source_level_concept.concept_id
         )
         if candidate is not None:
             return candidate
@@ -184,7 +195,8 @@ def _difficult_pattern(
         return "no_candidates"
 
     concept_id = getattr(source_level, "concept_id", None)
-    if has_unresolved_salt(package, concept_id, sau.task.target_terminology):
+    vocabulary = sau.task.source_vocabulary(getattr(source_level, "vocabulary", None))
+    if has_unresolved_salt(package, concept_id, vocabulary):
         return "unresolved_salt_ambiguity"
 
     candidate = source_candidate

@@ -20,8 +20,13 @@ engine-defined contract:
     vocabularies, so a redistributed name is never counted twice.
 ``relationships``
     ``vocabulary_id_1``, ``concept_code_1``, ``predicate``,
-    ``vocabulary_id_2``, ``concept_code_2``. Predicates use the engine's names
+    ``vocabulary_id_2``, ``concept_code_2``; optional ``assertion_source``
+    (who asserted or derived the edge). Predicates use the engine's names
     (``has_ingredient``, ``has_tradename``, ...), which profiles allowlist.
+    Edges normally stay inside one vocabulary; a declaration's
+    ``relationship_families`` lets them cross between vocabularies that extend
+    one another, such as RxNorm Extension products whose ingredients are
+    RxNorm concepts.
 ``xrefs``
     ``vocabulary_id``, ``concept_code``, ``key_type``, ``key_value``; optional
     ``assertion_source``. Equivalence keys such as ``UNII`` or ``UMLS_CUI``,
@@ -54,6 +59,7 @@ __all__ = [
     "LexiconManifest",
     "TableSpec",
     "VocabularyDeclaration",
+    "family_of",
 ]
 
 LEXICON_CONTRACT_VERSION = "1.0"
@@ -115,6 +121,7 @@ TABLES: dict[str, TableSpec] = {
                 "vocabulary_id_2",
                 "concept_code_2",
             ),
+            optional=("assertion_source",),
         ),
         TableSpec(
             "xrefs",
@@ -145,6 +152,13 @@ class LexiconDeclaration(BioSemAlignModel):
         default_factory=dict,
         description="Canonical names for synonym sources, e.g. {'MSH': 'MeSH'}.",
     )
+    relationship_families: list[list[str]] = Field(
+        default_factory=list,
+        description=(
+            "Vocabularies whose relationships may cross into one another, e.g. "
+            "[['RxNorm', 'RxNorm Extension']]. Every other edge stays inside one vocabulary."
+        ),
+    )
 
     @field_validator("vocabularies")
     @classmethod
@@ -156,6 +170,11 @@ class LexiconDeclaration(BioSemAlignModel):
         if duplicates:
             raise ValueError(f"vocabularies are declared more than once: {duplicates}")
         return vocabularies
+
+    @model_validator(mode="after")
+    def _families_are_declared(self) -> LexiconDeclaration:
+        validate_families(self.relationship_families, self.vocabularies)
+        return self
 
 
 class LexiconManifest(BioSemAlignModel):
@@ -171,6 +190,7 @@ class LexiconManifest(BioSemAlignModel):
     inputs_sha256: dict[str, str] = Field(default_factory=dict)
     vocabularies: list[VocabularyDeclaration] = Field(min_length=1)
     source_aliases: dict[str, str] = Field(default_factory=dict)
+    relationship_families: list[list[str]] = Field(default_factory=list)
     row_counts: dict[str, int] = Field(default_factory=dict)
     indexes: list[str] = Field(
         default_factory=lambda: ["exact", "bm25"],
@@ -198,11 +218,44 @@ class LexiconManifest(BioSemAlignModel):
             index_sha256=self.index_sha256,
             vocabularies=self.vocabularies,
             source_aliases=self.source_aliases,
+            relationship_families=self.relationship_families,
         )
 
     def vocabulary(self, vocabulary_id: str) -> VocabularyDeclaration | None:
         wanted = vocabulary_id.casefold()
         return next((v for v in self.vocabularies if v.vocabulary_id.casefold() == wanted), None)
+
+    def family(self, vocabulary_id: str) -> tuple[str, ...]:
+        """The vocabulary and every vocabulary its relationships may cross into."""
+        return family_of(vocabulary_id, self.relationship_families)
+
+
+def family_of(vocabulary_id: str, families: list[list[str]]) -> tuple[str, ...]:
+    """``vocabulary_id`` first, then its family members in declared order."""
+    wanted = vocabulary_id.casefold()
+    for family in families:
+        if any(member.casefold() == wanted for member in family):
+            return (vocabulary_id, *(m for m in family if m.casefold() != wanted))
+    return (vocabulary_id,)
+
+
+def validate_families(families: list[list[str]], vocabularies: list[VocabularyDeclaration]) -> None:
+    """Every family names at least two declared vocabularies, each in one family only."""
+    declared = {v.vocabulary_id.casefold() for v in vocabularies}
+    seen: set[str] = set()
+    for family in families:
+        members = [member.casefold() for member in family]
+        if len(set(members)) < 2:
+            raise ValueError(f"relationship family {family} needs at least two vocabularies")
+        unknown = sorted(set(members) - declared)
+        if unknown:
+            raise ValueError(
+                f"relationship family {family} names undeclared vocabularies {unknown}"
+            )
+        repeated = sorted(seen & set(members))
+        if repeated:
+            raise ValueError(f"vocabularies {repeated} appear in more than one relationship family")
+        seen |= set(members)
 
 
 def bundle_digest(
@@ -212,6 +265,7 @@ def bundle_digest(
     index_sha256: str,
     vocabularies: list[VocabularyDeclaration],
     source_aliases: dict[str, str],
+    relationship_families: list[list[str]] | None = None,
 ) -> str:
     payload: dict[str, Any] = {
         "contract_version": contract_version,
@@ -220,4 +274,8 @@ def bundle_digest(
         "vocabularies": [v.model_dump(mode="json") for v in vocabularies],
         "source_aliases": dict(sorted(source_aliases.items())),
     }
+    # Families change what a bundle's relationships mean, so they are pinned —
+    # but only when declared, keeping every earlier bundle's digest stable.
+    if relationship_families:
+        payload["relationship_families"] = [list(f) for f in relationship_families]
     return stable_digest(payload)

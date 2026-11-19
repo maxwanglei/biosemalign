@@ -15,6 +15,7 @@ __all__ = [
     "DecisionType",
     "EgressDataClass",
     "ErrorCategory",
+    "LinkKind",
     "MentionMode",
     "ReadinessStatus",
     "RelationshipType",
@@ -334,3 +335,15 @@ class ConcordanceState(StrEnum):
     #: Equivalence keys merged distinct concepts of one vocabulary, such as a
     #: salt and its base; the grouping cannot be trusted.
     EQUIVALENCE_CONFLICT = "EQUIVALENCE_CONFLICT"
+
+
+class LinkKind(StrEnum):
+    """How a matched code relates to the target code it links to (v0.3)."""
+
+    #: The same entity: the code is, or is equivalent to, a target concept at
+    #: the requested granularity. Nothing is lost.
+    EQUIVALENCE = "EQUIVALENCE"
+    #: A change of level: the target is reached by walking the target spec's
+    #: relationship from a more specific concept (a brand to its ingredient).
+    #: Lossy by definition.
+    PROJECTION = "PROJECTION"

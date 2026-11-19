@@ -13,8 +13,9 @@ from typing import Any
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from biosemalign.enums import ResourceMode, TierOutcome
+from biosemalign.enums import ConcordanceState, ResourceMode, TierOutcome
 from biosemalign.schemas.base import BioSemAlignModel, VersionedModel, deep_freeze
+from biosemalign.schemas.codes import EquivalenceGroup
 from biosemalign.util import utc_now
 
 __all__ = [
@@ -130,10 +131,20 @@ class WorkflowProvenance(BioSemAlignModel):
     workflow_id: str = Field(min_length=1)
     tiers: tuple[TierProvenance, ...] = Field(min_length=1)
     validators: tuple[OperatorProvenance, ...] = ()
+    target_spec: str | None = Field(
+        default=None, description="The target spec decisions followed, e.g. 'rxnorm@1.0' (v0.3)."
+    )
+    target_spec_sha256: str | None = None
 
 
 class TierAttempt(BioSemAlignModel):
-    """What one tier did with an SAU, and why it passed if it did."""
+    """What one tier did with an SAU, and why it passed if it did.
+
+    A tier that assesses concordance also records every exact match it saw —
+    each vocabulary's code, grouped by equivalence, linked to the target or
+    not. Coding is never lost when a tier passes: the final artifact carries
+    only the last tier's package, but every tier's matches stay here.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -141,6 +152,11 @@ class TierAttempt(BioSemAlignModel):
     outcome: TierOutcome
     reason: str | None = None
     detail: str | None = None
+    concordance_state: ConcordanceState | None = None
+    exact_matches: tuple[EquivalenceGroup, ...] = Field(
+        default=(),
+        description="Every exact match of this tier's package, grouped by equivalence.",
+    )
 
 
 class ResolutionTrace(BioSemAlignModel):

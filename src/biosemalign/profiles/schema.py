@@ -7,13 +7,16 @@ startup rather than silently widening what the adjudicator may consider.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, field_validator, model_validator
 
 from biosemalign.enums import MentionMode, RelationshipType, SemanticType, SourceType
 from biosemalign.schemas.base import BioSemAlignModel
 from biosemalign.schemas.sau import ContextEnvelope, ContextualAttributes
+
+if TYPE_CHECKING:
+    from biosemalign.targets.spec import TargetSpec
 
 __all__ = [
     "AdjudicationConfig",
@@ -39,6 +42,17 @@ _SUPPORTED_MAPPING_KEY_CONTEXT_FIELDS = frozenset(
 #: Context a proposer can be blinded to. Fields mirrored as contextual
 #: attributes are excluded: a decision must preserve those, so hiding them
 #: from the proposer would make every proposal fail attribute validation.
+#: Module names of a tier's stages (v0.3) and the fields they spell.
+_TIER_MODULES = {"coding": "retrievers", "linking": "fuser", "resolution": "proposer"}
+
+#: ``target:`` section fields and the task fields they spell.
+_TARGET_FIELDS = {
+    "spec": "target_spec",
+    "terminology": "target_terminology",
+    "granularity": "desired_granularity",
+    "source_terminologies": "source_terminologies",
+}
+
 _BLINDABLE_CONTEXT_FIELDS = frozenset(
     set(ContextEnvelope.model_fields) - set(ContextualAttributes.model_fields)
 )
@@ -61,6 +75,33 @@ class TaskConfig(BioSemAlignModel):
     mapping_intent: str
     target_terminology: str
     desired_granularity: str | None = None
+    target_spec: str | None = Field(
+        default=None,
+        description=(
+            "Target spec: a built-in id such as 'rxnorm', or a path to a spec YAML. "
+            "None uses the built-in spec of target_terminology."
+        ),
+    )
+    source_terminologies: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Vocabularies besides the target that a source-level concept may come from, "
+            "e.g. ['RxNorm Extension'] for non-US brands whose ingredients are RxNorm "
+            "concepts. Analysis-level concepts always come from the target terminology."
+        ),
+    )
+
+    def source_vocabulary(self, vocabulary: str | None) -> str:
+        """Where a source-level concept of ``vocabulary`` is looked up.
+
+        A permitted source terminology is looked up in itself; anything else
+        in the target, where an impostor finds no evidence and fails.
+        """
+        if vocabulary is not None and vocabulary.casefold() in {
+            v.casefold() for v in self.source_terminologies
+        }:
+            return vocabulary
+        return self.target_terminology
 
 
 class InputConfig(BioSemAlignModel):
@@ -337,6 +378,28 @@ class TierConfig(BioSemAlignModel):
     fuser: OperatorConfig = Field(default_factory=lambda: OperatorConfig(op="knowledge_package"))
     proposer: OperatorConfig = Field(default_factory=lambda: OperatorConfig(op="adjudicator"))
 
+    @model_validator(mode="before")
+    @classmethod
+    def _module_names(cls, data: Any) -> Any:
+        """Accept the module names: ``coding``, ``linking``, ``resolution`` (v0.3).
+
+        They spell ``retrievers``, ``fuser``, and ``proposer`` and are stored
+        under those names, so a profile written either way is the same profile.
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for module, stage in _TIER_MODULES.items():
+            if module not in data:
+                continue
+            if stage in data:
+                raise ValueError(f"tier sets both {module!r} and {stage!r}; use one")
+            value = data.pop(module)
+            if stage == "retrievers" and not isinstance(value, list):
+                value = [value]
+            data[stage] = value
+        return data
+
 
 class WorkflowConfig(BioSemAlignModel):
     """A cascade of tiers; the first tier to propose hands off to the kernel."""
@@ -381,6 +444,51 @@ class TaskProfile(BioSemAlignModel):
                 "would ask for concepts from a vocabulary it never queries"
             )
         return self
+
+    @model_validator(mode="before")
+    @classmethod
+    def _target_section(cls, data: Any) -> Any:
+        """Accept ``target:`` as a spelling of the task's target fields.
+
+        ``target: {spec, terminology, granularity, source_terminologies}`` fills
+        ``task.target_spec``, ``task.target_terminology``,
+        ``task.desired_granularity``, and ``task.source_terminologies``. A value
+        given both ways must agree.
+        """
+        if not isinstance(data, dict) or "target" not in data:
+            return data
+        data = dict(data)
+        target = data.pop("target") or {}
+        if not isinstance(target, dict):
+            raise ValueError("target must be a mapping")
+        unknown = sorted(set(target) - set(_TARGET_FIELDS))
+        if unknown:
+            raise ValueError(
+                f"target has unknown fields {unknown}; allowed: {list(_TARGET_FIELDS)}"
+            )
+        task = dict(data.get("task") or {})
+        if "spec" in target and "terminology" not in target and "target_terminology" not in task:
+            from biosemalign.targets import builtin_specs
+
+            builtin = builtin_specs().get(str(target["spec"]))
+            if builtin is not None:
+                target = {**target, "terminology": builtin.target}
+        for name, field in _TARGET_FIELDS.items():
+            if name not in target:
+                continue
+            if field in task and task[field] != target[name]:
+                raise ValueError(
+                    f"target.{name} ({target[name]!r}) contradicts task.{field} ({task[field]!r})"
+                )
+            task[field] = target[name]
+        data["task"] = task
+        return data
+
+    def target_spec(self) -> TargetSpec:
+        """The target terminology spec this profile maps into."""
+        from biosemalign.targets import load_target_spec
+
+        return load_target_spec(self.task.target_spec, terminology=self.task.target_terminology)
 
     def permits_relation(self, relation: RelationshipType) -> bool:
         """Whether the adjudicator may emit this relationship class for this task."""

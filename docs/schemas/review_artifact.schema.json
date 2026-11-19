@@ -488,6 +488,51 @@
       "title": "CandidateConcept",
       "type": "object"
     },
+    "CodeLink": {
+      "additionalProperties": false,
+      "description": "One matched code's route to one target code.",
+      "properties": {
+        "assertion_sources": {
+          "description": "Who asserted or derived the walked relationships.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Assertion Sources",
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/LinkKind"
+        },
+        "predicates": {
+          "description": "Relationships walked from ``via`` to ``target``.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Predicates",
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/QualifiedCode",
+          "description": "The matched code."
+        },
+        "target": {
+          "$ref": "#/$defs/QualifiedCode",
+          "description": "The target code at the requested granularity."
+        },
+        "via": {
+          "$ref": "#/$defs/QualifiedCode",
+          "description": "The target-family concept the source is, or is equivalent to."
+        }
+      },
+      "required": [
+        "source",
+        "via",
+        "target",
+        "kind"
+      ],
+      "title": "CodeLink",
+      "type": "object"
+    },
     "CodingPolicy": {
       "additionalProperties": false,
       "description": "A project rule the adjudicator must follow (§6.2, §14).",
@@ -1101,7 +1146,7 @@
       "properties": {
         "conflict": {
           "default": false,
-          "description": "True when the group holds two codes from one vocabulary.",
+          "description": "True when the group holds two codes from one vocabulary — or, when the profile names conflict vocabularies, two codes from that pool.",
           "title": "Conflict",
           "type": "boolean"
         },
@@ -1227,6 +1272,18 @@
           "title": "Kg Guidance",
           "type": "array"
         },
+        "links": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LinkSet"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Each exact match's links to target codes at the requested granularity, derived by the kernel from this package (v0.3); None when concordance was not assessed."
+        },
         "ontology_guidance": {
           "items": {
             "$ref": "#/$defs/KnowledgeStatement"
@@ -1324,6 +1381,19 @@
           "default": null,
           "title": "Object Label"
         },
+        "object_vocabulary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Vocabulary of the object when it differs from the subject's, e.g. an RxNorm ingredient of an RxNorm Extension product; None means the same.",
+          "title": "Object Vocabulary"
+        },
         "predicate": {
           "title": "Predicate",
           "type": "string"
@@ -1372,6 +1442,65 @@
       "title": "KnowledgeStatement",
       "type": "object"
     },
+    "LinkKind": {
+      "description": "How a matched code relates to the target code it links to (v0.3).",
+      "enum": [
+        "EQUIVALENCE",
+        "PROJECTION"
+      ],
+      "title": "LinkKind",
+      "type": "string"
+    },
+    "LinkSet": {
+      "additionalProperties": false,
+      "description": "Every matched code's links into the target, for one SAU.",
+      "properties": {
+        "ambiguous": {
+          "description": "Codes whose target-family concepts lead to different sets of targets.",
+          "items": {
+            "$ref": "#/$defs/QualifiedCode"
+          },
+          "title": "Ambiguous",
+          "type": "array"
+        },
+        "granularity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Granularity"
+        },
+        "links": {
+          "items": {
+            "$ref": "#/$defs/CodeLink"
+          },
+          "title": "Links",
+          "type": "array"
+        },
+        "target_spec": {
+          "description": "The target spec the links follow, e.g. 'rxnorm@1.0'.",
+          "title": "Target Spec",
+          "type": "string"
+        },
+        "target_spec_sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "title": "Target Spec Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_spec",
+        "target_spec_sha256"
+      ],
+      "title": "LinkSet",
+      "type": "object"
+    },
     "MappingTask": {
       "additionalProperties": false,
       "description": "What this mapping is *for*.\n\nMapping purpose and desired granularity are explicit rather than implied\n(goal 3, §3.1): \"metoprolol tartrate 50 MG oral tablet\" is the right answer\nfor product-level exposure and the wrong answer for ingredient-level signal\ndetection, and only the task can distinguish them.",
@@ -1398,6 +1527,14 @@
           "description": "Task name, e.g. 'drug_normalization'.",
           "title": "Operation",
           "type": "string"
+        },
+        "source_terminologies": {
+          "description": "Vocabularies besides the target that a source-level concept may come from; analysis-level concepts always come from the target terminology.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Terminologies",
+          "type": "array"
         },
         "target_terminology": {
           "description": "Target vocabulary, e.g. 'RxNorm'.",
@@ -2638,8 +2775,19 @@
     },
     "TierAttempt": {
       "additionalProperties": false,
-      "description": "What one tier did with an SAU, and why it passed if it did.",
+      "description": "What one tier did with an SAU, and why it passed if it did.\n\nA tier that assesses concordance also records every exact match it saw —\neach vocabulary's code, grouped by equivalence, linked to the target or\nnot. Coding is never lost when a tier passes: the final artifact carries\nonly the last tier's package, but every tier's matches stay here.",
       "properties": {
+        "concordance_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConcordanceState"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "detail": {
           "anyOf": [
             {
@@ -2651,6 +2799,15 @@
           ],
           "default": null,
           "title": "Detail"
+        },
+        "exact_matches": {
+          "default": [],
+          "description": "Every exact match of this tier's package, grouped by equivalence.",
+          "items": {
+            "$ref": "#/$defs/EquivalenceGroup"
+          },
+          "title": "Exact Matches",
+          "type": "array"
         },
         "outcome": {
           "$ref": "#/$defs/TierOutcome"
@@ -2803,6 +2960,31 @@
       "additionalProperties": false,
       "description": "The complete operator configuration a decision was produced under.\n\n``workflow_id`` is a digest of everything else here, so two decisions can\nbe compared for \"same workflow\" without diffing operator lists.",
       "properties": {
+        "target_spec": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The target spec decisions followed, e.g. 'rxnorm@1.0' (v0.3).",
+          "title": "Target Spec"
+        },
+        "target_spec_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Spec Sha256"
+        },
         "tiers": {
           "items": {
             "$ref": "#/$defs/TierProvenance"

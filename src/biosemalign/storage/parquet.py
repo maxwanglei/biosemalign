@@ -47,6 +47,9 @@ CROSSWALK_COLUMNS: tuple[str, ...] = (
     "concordance_state",
     "matched_codes",
     "resolved_by_tier",
+    "exact_match_tier",
+    "exact_match_state",
+    "exact_matches",
 )
 
 
@@ -65,6 +68,16 @@ def decision_to_row(decision: AlignmentDecision) -> dict[str, Any]:
     ]
     release = next((r.terminology_release for r in preferred or resources), None)
     resolution = decision.provenance.resolution
+    # The first tier that coded the mention: every exact match it saw, in every
+    # vocabulary, kept whether or not the decision rests on it.
+    coded = next(
+        (
+            attempt
+            for attempt in (resolution.attempts if resolution is not None else ())
+            if attempt.concordance_state is not None
+        ),
+        None,
+    )
     return {
         "sau_id": decision.sau_id,
         "reported_value": decision.source_value,
@@ -97,6 +110,17 @@ def decision_to_row(decision: AlignmentDecision) -> dict[str, Any]:
             f"{code.vocabulary}:{code.concept_code}" for code in decision.matched_codes
         ),
         "resolved_by_tier": resolution.resolved_by_tier if resolution is not None else None,
+        "exact_match_tier": coded.tier if coded is not None else None,
+        "exact_match_state": coded.concordance_state.value
+        if coded is not None and coded.concordance_state is not None
+        else None,
+        # Groups separated by ';', the codes of one group by '|'.
+        "exact_matches": ";".join(
+            "|".join(f"{m.vocabulary}:{m.concept_code}" for m in group.members)
+            for group in coded.exact_matches
+        )
+        if coded is not None
+        else None,
     }
 
 

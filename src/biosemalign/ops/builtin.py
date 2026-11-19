@@ -195,6 +195,10 @@ class RxNavRetrieveOp:
         channels = self.retriever.channels
         return {} if channels is None else {"channels": sorted(c.value for c in channels)}
 
+    def code(self, sau: SemanticAlignmentUnit) -> CandidateSet:
+        """The coding module's name for :meth:`retrieve`."""
+        return self.retrieve(sau)
+
     def retrieve(self, sau: SemanticAlignmentUnit) -> CandidateSet:
         return CandidateSet(retriever=self.op_id, candidates=self.retriever.retrieve(sau))
 
@@ -209,6 +213,12 @@ class KnowledgePackageFuseOp:
         self.knowledge = knowledge
         self.profile = profile
 
+    def link(
+        self, sau: SemanticAlignmentUnit, code_sets: Sequence[CandidateSet]
+    ) -> KnowledgePackage:
+        """The linking module's name for :meth:`fuse`."""
+        return self.fuse(sau, code_sets)
+
     def fuse(
         self, sau: SemanticAlignmentUnit, candidate_sets: Sequence[CandidateSet]
     ) -> KnowledgePackage:
@@ -221,10 +231,21 @@ class KnowledgePackageFuseOp:
         return self.package(sau, fused)
 
     def package(self, sau: SemanticAlignmentUnit, fused: list[Any]) -> KnowledgePackage:
-        """Enrich ranked candidates and bound them into a package."""
+        """Enrich ranked candidates and bound them into a package.
+
+        Candidates of the target terminology are enriched, and so are those of
+        any permitted source terminology present, which a proposer may choose
+        as the source identity and must be able to project.
+        """
         enriched = enrich_candidates(
             fused, provider=self.knowledge.primary_provider(), profile=self.profile
         )
+        present = {candidate.vocabulary.casefold() for candidate in fused}
+        for vocabulary in self.profile.task.source_terminologies:
+            if vocabulary.casefold() in present:
+                enriched = enrich_candidates(
+                    enriched, provider=self.knowledge.provider_for(vocabulary), profile=self.profile
+                )
         return build_knowledge_package(
             sau_id=sau.sau_id,
             candidates=enriched,
@@ -313,6 +334,12 @@ class AdjudicatorProposeOp:
         if self.pass_on_review_request:
             options["pass_on_review_request"] = True
         return options
+
+    def resolve(
+        self, sau: SemanticAlignmentUnit, package: KnowledgePackage
+    ) -> AlignmentProposal | PassToNext:
+        """The resolution module's name for :meth:`propose`."""
+        return self.propose(sau, package)
 
     def propose(
         self, sau: SemanticAlignmentUnit, package: KnowledgePackage

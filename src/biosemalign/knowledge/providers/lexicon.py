@@ -45,7 +45,13 @@ from biosemalign.schemas.knowledge import CandidateConcept, KnowledgeStatement, 
 from biosemalign.schemas.provenance import ResourceProvenance
 from biosemalign.util import normalize_text, tokenize
 
-__all__ = ["LEXICON_PROVIDER_VERSION", "LexiconHit", "LexiconProvider", "LexiconStore"]
+__all__ = [
+    "LEXICON_PROVIDER_VERSION",
+    "LexiconEdge",
+    "LexiconHit",
+    "LexiconProvider",
+    "LexiconStore",
+]
 
 LEXICON_PROVIDER_VERSION = "0.1.0"
 
@@ -64,6 +70,17 @@ _POSTINGS_BUDGET = 50_000
 _CACHE_ENTRIES = 100_000
 
 log = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class LexiconEdge:
+    """One outgoing relationship of a concept, its object vocabulary-qualified."""
+
+    subject: str
+    predicate: str
+    object_vocabulary: str
+    object_code: str
+    assertion_source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +188,10 @@ class LexiconStore:
             int(key): str(source)
             for key, source in self._rows("SELECT source_key, source FROM sources")
         }
+        # Bundles built before relationships carried a source lack the column.
+        self._edge_source_column = any(
+            row[0] == "assertion_source" for row in self._rows("DESCRIBE relationships")
+        )
 
     @property
     def bundle_sha256(self) -> str:
@@ -377,28 +398,43 @@ class LexiconStore:
             names[code] = self._memoized(self._names_cache, (vocabulary_id, code), load)
         return names
 
+    def family(self, vocabulary_id: str) -> tuple[str, ...]:
+        """The vocabulary first, then those its relationships may cross into."""
+        return self.manifest.family(vocabulary_id)
+
     def relationships(
         self, vocabulary_id: str, codes: Iterable[str], predicates: Sequence[str]
-    ) -> list[tuple[str, str, str]]:
-        """``(subject, predicate, object)`` edges inside one vocabulary."""
+    ) -> list[LexiconEdge]:
+        """Outgoing edges inside the subject's vocabulary family.
+
+        Without a declared family that is the vocabulary itself. With one —
+        RxNorm and RxNorm Extension, say — an RxNorm Extension product's
+        ``has_ingredient`` edge to an RxNorm ingredient is returned too, with
+        the object's vocabulary, so it is never read as a code of its own.
+        """
         wanted = set(predicates)
-        edges: list[tuple[str, str, str]] = []
+        family = list(self.family(vocabulary_id))
+        source = "assertion_source" if self._edge_source_column else "NULL"
+        edges: list[LexiconEdge] = []
         for code in sorted(set(codes)):
 
-            def load(code: str = code) -> list[tuple[str, str]]:
+            def load(code: str = code) -> list[tuple[str, str, str, str | None]]:
                 return [
-                    (str(predicate), str(obj))
-                    for predicate, obj in self._rows(
-                        "SELECT predicate, concept_code_2 FROM relationships "
-                        "WHERE vocabulary_id_1 = ? AND concept_code_1 = ? "
-                        "AND vocabulary_id_2 = vocabulary_id_1 ORDER BY predicate, concept_code_2",
-                        [vocabulary_id, code],
+                    (str(predicate), str(object_vocabulary), str(obj), asserted)
+                    for predicate, object_vocabulary, obj, asserted in self._rows(
+                        f"SELECT predicate, vocabulary_id_2, concept_code_2, {source} "
+                        "FROM relationships WHERE vocabulary_id_1 = ? AND concept_code_1 = ? "
+                        "AND list_contains(?::VARCHAR[], vocabulary_id_2) "
+                        "ORDER BY predicate, vocabulary_id_2, concept_code_2",
+                        [vocabulary_id, code, family],
                     )
                 ]
 
             outgoing = self._memoized(self._relationship_cache, (vocabulary_id, code), load)
             edges.extend(
-                (code, predicate, obj) for predicate, obj in outgoing if predicate in wanted
+                LexiconEdge(code, predicate, object_vocabulary, obj, asserted)
+                for predicate, object_vocabulary, obj, asserted in outgoing
+                if predicate in wanted
             )
         return edges
 
@@ -407,9 +443,9 @@ class LexiconStore:
             return frozenset(
                 str(row[0])
                 for row in self._rows(
-                    "SELECT DISTINCT predicate FROM relationships "
-                    "WHERE vocabulary_id_1 = ? AND vocabulary_id_2 = ?",
-                    [vocabulary_id, vocabulary_id],
+                    "SELECT DISTINCT predicate FROM relationships WHERE vocabulary_id_1 = ? "
+                    "AND list_contains(?::VARCHAR[], vocabulary_id_2)",
+                    [vocabulary_id, list(self.family(vocabulary_id))],
                 )
             )
 
@@ -486,10 +522,12 @@ class LexiconProvider:
         predicates: list[str],
         max_hops: int = 1,
     ) -> list[KnowledgeStatement]:
-        """Edges inside this vocabulary, followed up to ``max_hops`` deep.
+        """Edges inside this vocabulary's family, followed up to ``max_hops`` deep.
 
-        Edges to other vocabularies stay in the bundle but are not returned:
-        a statement's object is identified within the subject's vocabulary.
+        Edges to vocabularies outside the declared family stay in the bundle
+        but are not returned. An edge into another family member names that
+        vocabulary in ``object_vocabulary``; otherwise the object is a code of
+        the subject's own vocabulary.
         """
         statements: list[KnowledgeStatement] = []
         frontier = {concept_id}
@@ -497,25 +535,38 @@ class LexiconProvider:
         for hop in range(1, max(max_hops, 1) + 1):
             edges = self.store.relationships(self.vocabulary, frontier, predicates)
             self._touch()
-            objects = {obj for _, _, obj in edges}
-            rows = self.store.concepts(self.vocabulary, objects | frontier)
-            for subject, predicate, obj in edges:
-                target = rows.get(obj)
+            rows: dict[tuple[str, str], Any] = {}
+            for vocabulary in {edge.object_vocabulary for edge in edges} | {self.vocabulary}:
+                codes = {e.object_code for e in edges if e.object_vocabulary == vocabulary}
+                if vocabulary == self.vocabulary:
+                    codes |= frontier
+                for code, row in self.store.concepts(vocabulary, codes).items():
+                    rows[(vocabulary, code)] = row
+            for edge in edges:
+                target = rows.get((edge.object_vocabulary, edge.object_code))
+                own = edge.object_vocabulary == self.vocabulary
+                extensions: dict[str, Any] = {
+                    "target_tty": target.concept_class if target else None,
+                    "target_status": target.status if target else None,
+                }
+                if edge.assertion_source is not None:
+                    extensions["assertion_source"] = edge.assertion_source
                 statements.append(
                     KnowledgeStatement(
-                        subject_id=concept_id if hop > 1 else subject,
-                        predicate=predicate,
-                        object_id=obj,
+                        subject_id=concept_id if hop > 1 else edge.subject,
+                        predicate=edge.predicate,
+                        object_id=edge.object_code,
+                        object_vocabulary=None if own else edge.object_vocabulary,
                         object_label=target.concept_name if target else None,
                         source_resource=self.vocabulary,
                         authority=Authority.OFFICIAL_CODING_RELATIONSHIP,
                         direct=hop == 1,
-                        extensions={
-                            "target_tty": target.concept_class if target else None,
-                            "target_status": target.status if target else None,
-                        },
+                        extensions=extensions,
                     )
                 )
+            # Only the subject's own vocabulary is walked further: a code is
+            # meaningful only together with its vocabulary.
+            objects = {e.object_code for e in edges if e.object_vocabulary == self.vocabulary}
             frontier = objects - seen
             seen |= objects
             if not frontier:

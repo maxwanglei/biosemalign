@@ -33,6 +33,7 @@ import yaml
 from biosemalign.exceptions import LexiconError
 from biosemalign.knowledge.lexicon.build import DUCKDB_CONFIG, require_duckdb
 from biosemalign.knowledge.lexicon.contract import LexiconDeclaration, VocabularyDeclaration
+from biosemalign.targets import builtin_specs
 
 __all__ = [
     "DEFAULT_RELATIONSHIP_MAP",
@@ -51,27 +52,11 @@ DEFAULT_RELATIONSHIP_MAP: dict[str, str] = {
     "Consists of": "consists_of",
 }
 
-#: OMOP concept classes of RxNorm and RxNorm Extension, as RxNorm term types.
-RXNORM_CLASS_TO_TTY: dict[str, str] = {
-    "Ingredient": "IN",
-    "Precise Ingredient": "PIN",
-    "Multiple Ingredients": "MIN",
-    "Brand Name": "BN",
-    "Dose Form": "DF",
-    "Dose Form Group": "DFG",
-    "Clinical Drug": "SCD",
-    "Branded Drug": "SBD",
-    "Clinical Drug Comp": "SCDC",
-    "Branded Drug Comp": "SBDC",
-    "Clinical Drug Form": "SCDF",
-    "Branded Drug Form": "SBDF",
-    "Clinical Dose Group": "SCDG",
-    "Branded Dose Group": "SBDG",
-    "Clinical Pack": "GPCK",
-    "Branded Pack": "BPCK",
-}
+#: OMOP concept classes of RxNorm and RxNorm Extension, as RxNorm term types —
+#: the RxNorm target spec's class aliases.
+RXNORM_CLASS_TO_TTY: dict[str, str] = dict(builtin_specs()["rxnorm"].class_aliases)
 
-_RXNORM_FAMILY = ("RxNorm", "RxNorm Extension")
+_RXNORM_FAMILY = tuple(builtin_specs()["rxnorm"].family)
 
 _REQUIRED_COLUMNS: dict[str, tuple[str, ...]] = {
     "CONCEPT": (
@@ -169,7 +154,11 @@ def import_omop(
     finally:
         con.close()
 
-    declaration = LexiconDeclaration(vocabularies=declarations)
+    imported = {d.vocabulary_id for d in declarations}
+    # RxNorm Extension products and brands take RxNorm ingredients: their edges
+    # cross between the two, which a declared family permits.
+    families = [list(_RXNORM_FAMILY)] if set(_RXNORM_FAMILY) <= imported else []
+    declaration = LexiconDeclaration(vocabularies=declarations, relationship_families=families)
     (output / "vocabularies.yaml").write_text(
         yaml.safe_dump(declaration.model_dump(mode="json"), sort_keys=False), encoding="utf-8"
     )

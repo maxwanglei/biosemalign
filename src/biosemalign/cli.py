@@ -699,12 +699,22 @@ app.add_typer(lexicon_app, name="lexicon")
 
 @lexicon_app.command("build")
 def lexicon_build(
-    source: Annotated[Path, typer.Option("--source", help="Directory of contract tables.")],
+    source: Annotated[
+        list[Path],
+        typer.Option(
+            "--source",
+            help="Directory of contract tables (repeatable: tables are combined, e.g. a base "
+            "dictionary plus link overlays).",
+        ),
+    ],
     declaration: Annotated[
         Path, typer.Option("--declaration", help="Vocabulary declaration (YAML or JSON).")
     ],
     output: Annotated[Path, typer.Option("--output", "-o", help="Bundle directory to write.")],
     overwrite: Annotated[bool, typer.Option(help="Replace an existing bundle.")] = False,
+    trigram: Annotated[
+        bool, typer.Option(help="Build the trigram index for typo-tolerant ranking.")
+    ] = True,
 ) -> None:
     """Validate contract tables and compile them into a pinned bundle."""
     from biosemalign.exceptions import LexiconError
@@ -712,7 +722,11 @@ def lexicon_build(
 
     try:
         manifest = build_lexicon(
-            source, output, declaration=load_declaration(declaration), overwrite=overwrite
+            source,
+            output,
+            declaration=load_declaration(declaration),
+            overwrite=overwrite,
+            trigram_index=trigram,
         )
     except LexiconError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
@@ -754,6 +768,114 @@ def lexicon_info(
             f"  {vocabulary.vocabulary_id} {vocabulary.release} "
             f"[{vocabulary.license}] {count} concepts"
         )
+
+
+@lexicon_app.command("link")
+def lexicon_link(
+    base: Annotated[
+        Path, typer.Option("--base", help="Directory of the dictionary's contract tables.")
+    ],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Directory for the overlays.")],
+    athena: Annotated[
+        Path | None, typer.Option(help="Athena download (CONCEPT, CONCEPT_RELATIONSHIP, ...).")
+    ] = None,
+    unii: Annotated[
+        Path | None, typer.Option(help="FDA UNII Records file, or the UNIIs zip holding it.")
+    ] = None,
+    mesh: Annotated[
+        list[Path] | None, typer.Option(help="MeSH desc/supp XML file (repeatable).")
+    ] = None,
+    product_evidence: Annotated[
+        Path | None,
+        typer.Option(
+            help="Product listing table (vocabulary_id, concept_code, product_name, "
+            "ingredient_text)."
+        ),
+    ] = None,
+    declaration: Annotated[
+        Path | None,
+        typer.Option(help="Vocabulary declaration; default <base>/vocabularies.yaml."),
+    ] = None,
+    target: Annotated[str, typer.Option(help="Target terminology.")] = "RxNorm",
+    family: Annotated[
+        list[str] | None,
+        typer.Option(help="Target family member (repeatable); default target + RxNorm Extension."),
+    ] = None,
+    allow_version_mismatch: Annotated[
+        bool, typer.Option(help="Proceed when Athena's releases differ from the dictionary's.")
+    ] = False,
+    overwrite: Annotated[bool, typer.Option(help="Replace existing overlays.")] = False,
+) -> None:
+    """Derive missing links (ingredients, cross-vocabulary keys) as build overlays."""
+    from biosemalign.exceptions import LexiconError
+    from biosemalign.knowledge.lexicon.build import load_declaration
+    from biosemalign.knowledge.lexicon.links import LINK_OVERLAYS, derive_links
+
+    try:
+        report = derive_links(
+            base,
+            output,
+            declaration=load_declaration(declaration) if declaration is not None else None,
+            athena=athena,
+            unii=unii,
+            mesh=mesh or [],
+            product_evidence=product_evidence,
+            target=target,
+            family=family,
+            allow_version_mismatch=allow_version_mismatch,
+            overwrite=overwrite,
+        )
+    except LexiconError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    for result in sorted(report.results, key=lambda r: r.rule):
+        if result.skipped:
+            typer.echo(f"  {result.rule} skipped: {result.skipped}")
+        else:
+            typer.echo(
+                f"  {result.rule} {result.description}: linked {result.linked}/"
+                f"{result.considered}, {result.emitted} rows"
+            )
+    for name, count in report.overlay_rows.items():
+        typer.echo(f"  {name}/: {count} new rows")
+    sources = " ".join(f"--source {output / name}" for name in LINK_OVERLAYS)
+    typer.echo(f"report: {output / 'link_report.md'}")
+    typer.echo(
+        f"next: biosemalign lexicon build --source {base} {sources} "
+        f"--declaration {output / 'vocabularies.yaml'} --output <bundle>"
+    )
+
+
+@lexicon_app.command("audit")
+def lexicon_audit(
+    bundle: Annotated[Path, typer.Argument(help="Bundle directory.")],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Directory for the report.")],
+    target: Annotated[str, typer.Option(help="Target terminology.")] = "RxNorm",
+    crosswalk: Annotated[
+        bool, typer.Option(help="Also write code_to_ingredient.parquet for every active concept.")
+    ] = False,
+    sha256: Annotated[
+        str | None, typer.Option("--sha256", help="Also require this pinned bundle digest.")
+    ] = None,
+) -> None:
+    """Measure how much of a bundle links to the target terminology's ingredients."""
+    from biosemalign.exceptions import LexiconError
+    from biosemalign.knowledge.lexicon.audit import audit_bundle
+
+    try:
+        report = audit_bundle(
+            bundle, output, target=target, expected_sha256=sha256, write_crosswalk=crosswalk
+        )
+    except LexiconError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"audited {bundle} against {report.target} ({', '.join(report.family)})")
+    for vocabulary, counts in report.vocabularies.items():
+        typer.echo(
+            f"  {vocabulary}: {counts['reach']}/{counts['active']} active concepts reach an "
+            "ingredient"
+        )
+    typer.echo(f"report: {output / 'audit.md'}")
 
 
 @lexicon_app.command("embed")
@@ -850,6 +972,64 @@ def lexicon_import_omop(
         f"next: biosemalign lexicon build --source {output} "
         f"--declaration {output / 'vocabularies.yaml'} --output <bundle>"
     )
+
+
+# -- coding ----------------------------------------------------------------
+
+
+@app.command("code")
+def code(
+    bundle: Annotated[Path, typer.Option("--bundle", help="Lexicon bundle directory.")],
+    input_path: Annotated[
+        Path, typer.Option("--input", "-i", help="Terms to code (.csv, .tsv, .txt, .parquet).")
+    ],
+    text_column: Annotated[str, typer.Option("--text-column", help="Column holding the term.")],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Directory for the outputs.")],
+    id_column: Annotated[
+        list[str] | None,
+        typer.Option("--id-column", help="Column carried to every output row (repeatable)."),
+    ] = None,
+    vocabulary: Annotated[
+        list[str] | None,
+        typer.Option("--vocabulary", help="Code against this vocabulary only (repeatable)."),
+    ] = None,
+    target: Annotated[
+        str, typer.Option(help="Terminology whose ingredients codes are annotated with.")
+    ] = "RxNorm",
+    sha256: Annotated[
+        str | None, typer.Option("--sha256", help="Require this pinned bundle digest.")
+    ] = None,
+    overwrite: Annotated[bool, typer.Option(help="Replace existing outputs.")] = False,
+) -> None:
+    """Step 1a: attach every exact dictionary code to every term, in bulk.
+
+    Every code is kept — all vocabularies, linked to the target or not — and
+    terms with no exact match are listed for the next step. Nothing is decided.
+    """
+    from biosemalign.coding import code_terms
+    from biosemalign.exceptions import LexiconError
+
+    try:
+        report = code_terms(
+            bundle,
+            input_path,
+            output,
+            text_column=text_column,
+            id_columns=id_column or [],
+            vocabularies=vocabulary,
+            target=target,
+            expected_sha256=sha256,
+            overwrite=overwrite,
+        )
+    except LexiconError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(
+        f"coded {report.coded_terms}/{report.terms} distinct terms "
+        f"({report.coded_rows}/{report.rows - report.blank_rows} rows); "
+        f"{report.terms_reaching_target} terms have a code reaching a {target} ingredient"
+    )
+    typer.echo(f"outputs and report: {output}")
 
 
 # -- helpers ---------------------------------------------------------------

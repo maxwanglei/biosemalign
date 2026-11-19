@@ -2,8 +2,10 @@
 
 Baselines 1–3 of the evaluation comparison in §22.3, and the reference against
 which the candidate-constrained LLM will be measured. It selects strictly from
-retrieved evidence, walks the RxNorm hierarchy to the requested granularity,
-and reports what that walk discards.
+retrieved evidence, walks the target terminology to the requested granularity,
+and reports what that walk discards. Which classes sit at which level, which
+relationship leads there, and what is lost on the way come from the profile's
+target spec (``targets/rxnorm.yaml`` for drug normalization), not from code.
 
 It is not a placeholder for the LLM. Most FAERS product strings are resolvable
 by terminology alone, and sending them to a model would add cost, variance, and
@@ -13,8 +15,6 @@ v0.2 exists for the residue this one cannot settle.
 
 from __future__ import annotations
 
-import re
-
 from biosemalign.adjudication.backend import GenerationConfig
 from biosemalign.enums import (
     ConceptStatus,
@@ -22,9 +22,9 @@ from biosemalign.enums import (
     ReadinessStatus,
     RelationshipType,
     RetrievalChannel,
-    SemanticLossKind,
 )
 from biosemalign.exceptions import AdjudicationFailure
+from biosemalign.linking.core import targets_at
 from biosemalign.logging import get_logger
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.schemas.decision import AlignmentProposal, SelectedConcept, SemanticLoss
@@ -44,44 +44,6 @@ _EXACT_SIMILARITY = 0.85
 
 log = get_logger(__name__)
 
-#: Term types that denote a single bare ingredient.
-#:
-#: ``MIN`` is deliberately absent. A multi-ingredient concept such as
-#: "hydrochlorothiazide / lisinopril" looks like an ingredient and is not one:
-#: treating it as terminal collapses a combination product to a single concept
-#: and misclassifies exposure for both drugs. It must be decomposed through
-#: ``has_ingredient`` like any other product.
-_INGREDIENT_TTYS = {"IN"}
-_PRECISE_INGREDIENT_TTYS = {"PIN"}
-#: Term types that are already at ingredient level and need no salt resolution.
-_INGREDIENT_LEVEL_TTYS = _INGREDIENT_TTYS | _PRECISE_INGREDIENT_TTYS
-# Which attributes a concept carries *at its own level*.
-#
-# This distinction is essential because RxNav's TTY traversal is bidirectional:
-# asking an ingredient for its dose forms returns every form any product
-# containing it comes in. Those are downstream products, not attributes of the
-# ingredient — reporting them as semantic loss would claim that mapping
-# "metoprolol tartrate" to "metoprolol" discards a dose form the source never
-# named. Loss is therefore derived from the source concept's own term type.
-
-#: Term types that carry brand identity.
-_BRANDED_TTYS = {"SBD", "SBDC", "SBDF", "SBDG", "BN", "BPCK"}
-#: Term types that carry a numeric strength.
-_STRENGTH_BEARING_TTYS = {"SCD", "SBD", "SCDC", "SBDC", "GPCK", "BPCK"}
-#: Term types that carry a dose form.
-_DOSE_FORM_BEARING_TTYS = {"SCD", "SBD", "SCDF", "SBDF", "SCDG", "SBDG", "GPCK", "BPCK"}
-
-_STRENGTH = re.compile(
-    r"\b\d+(?:\.\d+)?\s*(?:mg|mcg|µg|ug|g|ml|l|unit|units|iu|%)\b", re.IGNORECASE
-)
-
-#: Predicate a granularity request resolves to.
-_GRANULARITY_PREDICATE = {
-    "ingredient": "has_ingredient",
-    "precise_ingredient": "has_precise_ingredient",
-    "active_moiety": "has_boss",
-}
-
 
 class DeterministicAdjudicator:
     """Rule-based, candidate-constrained adjudication for drug normalization."""
@@ -90,6 +52,7 @@ class DeterministicAdjudicator:
 
     def __init__(self, profile: TaskProfile) -> None:
         self.profile = profile
+        self.spec = profile.target_spec()
 
     # -- protocol ----------------------------------------------------------
 
@@ -168,7 +131,7 @@ class DeterministicAdjudicator:
             )
 
         granularity = sau.task.desired_granularity
-        predicate = _GRANULARITY_PREDICATE.get(granularity or "")
+        predicate = self.spec.predicate(granularity)
         if predicate is None:
             return self._abstain(
                 sau,
@@ -179,7 +142,7 @@ class DeterministicAdjudicator:
                     f"granularity {granularity!r}; it will not silently default to ingredient"
                 ),
             )
-        targets = self._targets_at_granularity(top, predicate)
+        targets = self._targets_at_granularity(top, granularity)
 
         if not targets:
             return self._unresolved_granularity(sau, top, predicate)
@@ -216,7 +179,7 @@ class DeterministicAdjudicator:
         loss = (
             []
             if relationship is RelationshipType.EXACT
-            else self._semantic_loss(sau, source_concept, target)
+            else self._semantic_loss(sau, source_concept, [target])
         )
 
         return self._proposal(
@@ -244,18 +207,14 @@ class DeterministicAdjudicator:
         for target in targets:
             target.relationship_to_source = RelationshipType.COMPONENT_OF
 
-        loss = self._semantic_loss(sau, source_concept, targets[0])
-        loss.append(
-            SemanticLoss(
-                kind=SemanticLossKind.COMBINATION_COMPONENT,
-                description=(
-                    "source is a combination product; it is represented by "
-                    f"{len(targets)} separate ingredient concepts and cannot be "
-                    "collapsed to one without misclassifying exposure"
-                ),
-                source_value=source_concept.preferred_label,
-            )
+        loss = self._semantic_loss(sau, source_concept, targets)
+        combination = self.spec.combination_loss(
+            sau.task.desired_granularity,
+            count=len(targets),
+            source_label=source_concept.preferred_label,
         )
+        if combination is not None:
+            loss.append(combination)
 
         return self._proposal(
             sau,
@@ -372,118 +331,43 @@ class DeterministicAdjudicator:
             return True
         return self._similarity(sau, candidate) >= _EXACT_SIMILARITY
 
-    def _targets_at_granularity(
-        self, candidate: CandidateConcept, predicate: str
+    def targets_for(
+        self, candidate: CandidateConcept, granularity: str | None
     ) -> list[SelectedConcept]:
-        """Concepts reachable at the requested granularity.
+        """Concepts ``candidate`` reaches at ``granularity``; empty when none or unknown.
 
-        A candidate that is already at the requested level is its own target —
-        without this, "metoprolol" would fail to map, since an ingredient has
-        no ``has_ingredient`` edge pointing at itself.
+        Lets a proposer that chose the identity itself decide, before calling
+        :meth:`project`, whether the identity can reach the analysis level.
         """
-        wanted_ttys = (
-            _INGREDIENT_TTYS
-            if predicate == "has_ingredient"
-            else _PRECISE_INGREDIENT_TTYS
-            if predicate == "has_precise_ingredient"
-            else _INGREDIENT_TTYS
-            if predicate == "has_boss"
-            else set()
-        )
-        if candidate.concept_class in wanted_ttys:
-            return [_to_selected(candidate)]
+        if self.spec.predicate(granularity) is None:
+            return []
+        return self._targets_at_granularity(candidate, granularity)
 
-        statements = [s for s in candidate.relationships if s.predicate == predicate]
-        return [_statement_to_selected(s, candidate) for s in _dedupe(statements)]
+    def _targets_at_granularity(
+        self, candidate: CandidateConcept, granularity: str | None
+    ) -> list[SelectedConcept]:
+        """Concepts reachable at the requested granularity (``linking.targets_at``)."""
+        return [
+            _to_selected(candidate)
+            if reached.statement is None
+            else _statement_to_selected(reached.statement, candidate)
+            for reached in targets_at(candidate, self.spec, granularity)
+        ]
 
     def _semantic_loss(
         self,
         sau: SemanticAlignmentUnit,
         source_concept: CandidateConcept,
-        target: SelectedConcept,
+        targets: list[SelectedConcept],
     ) -> list[SemanticLoss]:
-        """What the coarser target concept does not carry (§8.2, goal 7)."""
-        losses: list[SemanticLoss] = []
-        source_label = source_concept.preferred_label
-        tty = source_concept.concept_class or ""
-
-        if tty in _STRENGTH_BEARING_TTYS:
-            strength = _STRENGTH.search(source_label) or _STRENGTH.search(sau.mention.text)
-            if strength and not _STRENGTH.search(target.label):
-                losses.append(
-                    SemanticLoss(
-                        kind=SemanticLossKind.STRENGTH,
-                        description="target concept does not carry product strength",
-                        source_value=strength.group(0).strip(),
-                    )
-                )
-
-        if tty in _DOSE_FORM_BEARING_TTYS:
-            labels = [
-                s.object_label
-                for s in source_concept.relationships
-                if s.predicate == "has_dose_form" and s.object_label
-            ]
-            if labels:
-                losses.append(
-                    SemanticLoss(
-                        kind=SemanticLossKind.DOSE_FORM,
-                        description="target concept does not carry dose form",
-                        source_value=", ".join(labels),
-                    )
-                )
-
-        if tty in _PRECISE_INGREDIENT_TTYS and source_concept.candidate_id != target.concept_id:
-            losses.append(
-                SemanticLoss(
-                    kind=SemanticLossKind.SALT_FORM,
-                    description="source names a precise ingredient; target is the base ingredient",
-                    source_value=source_label,
-                )
-            )
-        elif tty not in _INGREDIENT_LEVEL_TTYS:
-            precise = [
-                s
-                for s in source_concept.relationships
-                if s.predicate == "has_precise_ingredient" and s.object_id != target.concept_id
-            ]
-            if precise:
-                losses.append(
-                    SemanticLoss(
-                        kind=SemanticLossKind.SALT_FORM,
-                        description=(
-                            "target is the base ingredient; the source names a specific salt "
-                            "or precise ingredient, which the target does not distinguish"
-                        ),
-                        source_value=", ".join(s.object_label or s.object_id for s in precise),
-                    )
-                )
-
-        if tty in _BRANDED_TTYS:
-            brands = [
-                s.object_label or s.object_id
-                for s in source_concept.relationships
-                if s.predicate == "has_tradename"
-            ]
-            losses.append(
-                SemanticLoss(
-                    kind=SemanticLossKind.BRAND_IDENTITY,
-                    description="target concept is generic; brand identity is not preserved",
-                    source_value=", ".join(brands) or source_label,
-                )
-            )
-
-        route = sau.context.route or sau.attributes.route
-        if route:
-            losses.append(
-                SemanticLoss(
-                    kind=SemanticLossKind.ROUTE,
-                    description="target concept does not carry route of administration",
-                    source_value=route,
-                )
-            )
-
-        return losses
+        """What the coarser target does not carry (§8.2, goal 7), by the target spec."""
+        return self.spec.expected_losses(
+            source_concept,
+            selected_ids=[target.concept_id for target in targets],
+            target_label=targets[0].label if targets else None,
+            mention_text=sau.mention.text,
+            context={"route": sau.context.route or sau.attributes.route},
+        )
 
     def _proposal(
         self,
@@ -559,23 +443,12 @@ def _statement_to_selected(
     return SelectedConcept(
         concept_id=statement.object_id,
         label=statement.object_label or statement.object_id,
-        vocabulary=source.vocabulary,
+        vocabulary=statement.object_vocabulary or source.vocabulary,
         concept_class=statement.extensions.get("target_tty"),
         # Reached by traversal from a retrieved candidate; the traversal itself
         # is retrieved evidence, but the concept's own status was not fetched.
         status=ConceptStatus.UNKNOWN,
     )
-
-
-def _dedupe(statements: list[KnowledgeStatement]) -> list[KnowledgeStatement]:
-    seen: set[str] = set()
-    unique: list[KnowledgeStatement] = []
-    for statement in statements:
-        if statement.object_id in seen:
-            continue
-        seen.add(statement.object_id)
-        unique.append(statement)
-    return unique
 
 
 def _reference(statement: KnowledgeStatement) -> str:

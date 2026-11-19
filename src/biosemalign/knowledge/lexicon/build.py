@@ -48,7 +48,9 @@ if TYPE_CHECKING:
 __all__ = [
     "DUCKDB_CONFIG",
     "build_lexicon",
+    "bulk_config",
     "file_sha256",
+    "load_contract_tables",
     "load_declaration",
     "require_duckdb",
     "trigrams",
@@ -63,6 +65,40 @@ DUCKDB_CONFIG: dict[str, Any] = {
 
 _BATCH_ROWS = 50_000
 _STATUSES = sorted(status.value for status in ConceptStatus)
+
+
+def bulk_config() -> dict[str, Any]:
+    """DuckDB settings for bulk work: a bounded memory budget that spills to disk.
+
+    DuckDB's default budget is 80% of physical memory. On a small shared
+    machine that invites a low-memory killer, which ends the process without
+    a trace. The default here is half of the memory available when the work
+    starts (at least 1 GB, at most half of physical memory);
+    ``BIOSEMALIGN_DUCKDB_MEMORY_LIMIT`` (e.g. ``"2GB"``) overrides it.
+    """
+    limit = os.environ.get("BIOSEMALIGN_DUCKDB_MEMORY_LIMIT") or _default_memory_limit()
+    return {
+        **DUCKDB_CONFIG,
+        "preserve_insertion_order": False,
+        **({"memory_limit": limit} if limit else {}),
+    }
+
+
+def _default_memory_limit() -> str | None:
+    try:
+        physical = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (ValueError, OSError, AttributeError):  # pragma: no cover - non-POSIX
+        return None
+    available = physical
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                available = int(line.split()[1]) * 1024
+                break
+    except (OSError, ValueError):  # pragma: no cover - not Linux
+        pass
+    budget = min(physical // 2, max(1 << 30, available // 2))
+    return f"{budget // (1 << 20)}MB"
 
 
 def require_duckdb() -> Any:
@@ -108,7 +144,7 @@ def trigrams(text: str) -> list[str]:
 
 
 def build_lexicon(
-    source_dir: str | Path,
+    source_dir: str | Path | Sequence[str | Path],
     output_dir: str | Path,
     *,
     declaration: LexiconDeclaration,
@@ -117,14 +153,25 @@ def build_lexicon(
 ) -> LexiconManifest:
     """Validate the contract tables in ``source_dir`` and write a bundle.
 
+    ``source_dir`` may list several directories: each table is the union of
+    that table's files across them. Overlays — derived links, say — then sit
+    beside the base tables instead of being written into them, and any one
+    can be left out of a build.
+
     The trigram index roughly multiplies postings by the average name length;
     a very large bundle that never needs typo tolerance can omit it.
     """
     indexes = ["exact", *(k for k in RANKED_INDEXES if k != "trigram" or trigram_index)]
     duckdb = require_duckdb()
-    source = Path(source_dir)
+    sources = (
+        [Path(source_dir)]
+        if isinstance(source_dir, str | Path)
+        else [Path(source) for source in source_dir]
+    )
+    if not sources:
+        raise LexiconError("name at least one lexicon source directory")
     output = Path(output_dir)
-    inputs = _locate_tables(source)
+    inputs = _locate_tables(sources)
 
     manifest_path = output / MANIFEST_FILE
     index_path = output / INDEX_FILE
@@ -136,9 +183,7 @@ def build_lexicon(
 
     try:
         with _connect(duckdb, partial) as con:
-            for name, path in inputs.items():
-                _load_raw(con, TABLES[name], path)
-            _type_tables(con, inputs)
+            _load_inputs(con, inputs)
             _validate(con, declaration)
             corpus = _build_synonyms(con, declaration, indexes[1:])
             for kind in indexes[1:]:
@@ -160,9 +205,10 @@ def build_lexicon(
         duckdb_version=duckdb.__version__,
         built_at=datetime.now(UTC),
         index_sha256=index_sha256,
-        inputs_sha256={path.name: file_sha256(path) for path in inputs.values()},
+        inputs_sha256=_input_digests(inputs),
         vocabularies=declaration.vocabularies,
         source_aliases=declaration.source_aliases,
+        relationship_families=declaration.relationship_families,
         row_counts=row_counts,
         indexes=indexes,
         bundle_sha256=bundle_digest(
@@ -171,6 +217,7 @@ def build_lexicon(
             index_sha256=index_sha256,
             vocabularies=declaration.vocabularies,
             source_aliases=declaration.source_aliases,
+            relationship_families=declaration.relationship_families,
         ),
     )
     # The manifest is written last: its presence marks a complete bundle.
@@ -185,35 +232,75 @@ def build_lexicon(
 
 @contextmanager
 def _connect(duckdb: Any, path: Path) -> Iterator[duckdb.DuckDBPyConnection]:
-    con = duckdb.connect(str(path), config=DUCKDB_CONFIG)
+    con = duckdb.connect(str(path), config=bulk_config())
     try:
         yield con
     finally:
         con.close()
 
 
-def _locate_tables(source: Path) -> dict[str, Path]:
-    if not source.is_dir():
-        raise LexiconError(f"lexicon source directory {source} does not exist")
-    found: dict[str, Path] = {}
+def _locate_tables(sources: Sequence[Path]) -> dict[str, list[Path]]:
+    found: dict[str, list[Path]] = {}
+    for source in sources:
+        if not source.is_dir():
+            raise LexiconError(f"lexicon source directory {source} does not exist")
+        for name in TABLES:
+            candidates = [
+                path
+                for path in (source / f"{name}{suffix}" for suffix in (".parquet", ".csv", ".tsv"))
+                if path.exists()
+            ]
+            if len(candidates) > 1:
+                raise LexiconError(
+                    f"table {name!r} is supplied more than once in {source}: "
+                    f"{[p.name for p in candidates]}"
+                )
+            found.setdefault(name, []).extend(candidates)
     for name, spec in TABLES.items():
-        candidates = [
-            path
-            for path in (source / f"{name}{suffix}" for suffix in (".parquet", ".csv", ".tsv"))
-            if path.exists()
-        ]
-        if len(candidates) > 1:
-            raise LexiconError(
-                f"table {name!r} is supplied more than once: {[p.name for p in candidates]}"
-            )
-        if candidates:
-            found[name] = candidates[0]
-        elif spec.mandatory:
-            raise LexiconError(f"required table {name!r} is missing from {source}")
-    return found
+        if spec.mandatory and not found.get(name):
+            locations = ", ".join(str(source) for source in sources)
+            raise LexiconError(f"required table {name!r} is missing from {locations}")
+    return {name: paths for name, paths in found.items() if paths}
 
 
-def _load_raw(con: duckdb.DuckDBPyConnection, spec: TableSpec, path: Path) -> None:
+def load_contract_tables(con: duckdb.DuckDBPyConnection, sources: Sequence[Path]) -> None:
+    """Load every contract table in ``sources`` as ``typed_<table>`` (all VARCHAR).
+
+    Each table is the union of its files across the directories; a table no
+    directory supplies is created empty. Columns are checked, values are not.
+    """
+    _load_inputs(con, _locate_tables(sources))
+
+
+def _load_inputs(con: duckdb.DuckDBPyConnection, inputs: dict[str, list[Path]]) -> None:
+    raw = {
+        name: [_load_raw(con, TABLES[name], path, i) for i, path in enumerate(paths)]
+        for name, paths in inputs.items()
+    }
+    _type_tables(con, raw)
+    for tables in raw.values():
+        for table, _ in tables:
+            con.execute(f"DROP TABLE {table}")
+
+
+def _input_digests(inputs: dict[str, list[Path]]) -> dict[str, str]:
+    """File digests, keyed by file name — or by directory/file across several sources."""
+    paths = [path for table in inputs.values() for path in table]
+    if len({path.parent for path in paths}) <= 1:
+        return {path.name: file_sha256(path) for path in paths}
+    digests: dict[str, str] = {}
+    for path in paths:
+        label = f"{path.parent.name}/{path.name}"
+        if label in digests:
+            label = str(path)
+        digests[label] = file_sha256(path)
+    return digests
+
+
+def _load_raw(
+    con: duckdb.DuckDBPyConnection, spec: TableSpec, path: Path, part: int
+) -> tuple[str, set[str]]:
+    """Load one source file as ``raw_<table>_<part>``; return its name and columns."""
     if path.suffix == ".parquet":
         relation = con.read_parquet(str(path))
     else:
@@ -223,8 +310,9 @@ def _load_raw(con: duckdb.DuckDBPyConnection, spec: TableSpec, path: Path) -> No
             all_varchar=True,
             delimiter="\t" if path.suffix == ".tsv" else ",",
         )
-    relation.create(f"raw_{spec.name}")
-    columns = [row[0] for row in con.execute(f"DESCRIBE raw_{spec.name}").fetchall()]
+    table = f"raw_{spec.name}_{part}"
+    relation.create(table)
+    columns = [row[0] for row in con.execute(f"DESCRIBE {table}").fetchall()]
     missing = sorted(set(spec.required) - set(columns))
     unknown = sorted(set(columns) - set(spec.columns))
     if missing or unknown:
@@ -233,25 +321,30 @@ def _load_raw(con: duckdb.DuckDBPyConnection, spec: TableSpec, path: Path) -> No
             problems.append(f"missing required columns {missing}")
         if unknown:
             problems.append(f"unknown columns {unknown} (allowed: {list(spec.columns)})")
-        raise LexiconError(f"table {spec.name!r} ({path.name}): " + "; ".join(problems))
+        raise LexiconError(f"table {spec.name!r} ({path}): " + "; ".join(problems))
+    return table, set(columns)
 
 
 def _column(name: str, present: set[str]) -> str:
     return f'CAST("{name}" AS VARCHAR)' if name in present else "CAST(NULL AS VARCHAR)"
 
 
-def _type_tables(con: duckdb.DuckDBPyConnection, inputs: dict[str, Path]) -> None:
-    present = {
-        name: {row[0] for row in con.execute(f"DESCRIBE raw_{name}").fetchall()} for name in inputs
-    }
+def _type_tables(
+    con: duckdb.DuckDBPyConnection, raw: dict[str, list[tuple[str, set[str]]]]
+) -> None:
     for name, spec in TABLES.items():
-        columns = present.get(name)
-        if columns is None:
+        parts = raw.get(name)
+        if not parts:
             selects = ", ".join(f"CAST(NULL AS VARCHAR) AS {column}" for column in spec.columns)
             con.execute(f"CREATE TABLE typed_{name} AS SELECT {selects} WHERE false")
             continue
-        selects = ", ".join(f"{_column(column, columns)} AS {column}" for column in spec.columns)
-        con.execute(f"CREATE TABLE typed_{name} AS SELECT {selects} FROM raw_{name}")
+        union = " UNION ALL ".join(
+            "SELECT "
+            + ", ".join(f"{_column(column, columns)} AS {column}" for column in spec.columns)
+            + f" FROM {table}"
+            for table, columns in parts
+        )
+        con.execute(f"CREATE TABLE typed_{name} AS {union}")
 
 
 # -- validation --------------------------------------------------------------
@@ -490,10 +583,16 @@ def _build_synonyms(
         "FROM synonym_distinct d JOIN synonym_text t USING (synonym_id) WHERE t.normalized <> '' "
         "ORDER BY d.vocabulary_id, d.concept_code, d.synonym_id"
     )
+    # One row per edge: when several sources assert the same edge, their
+    # names are kept together rather than duplicating the edge.
     con.execute(
-        "CREATE TABLE relationships AS SELECT DISTINCT vocabulary_id_1, concept_code_1, "
-        "trim(predicate) AS predicate, vocabulary_id_2, concept_code_2 FROM typed_relationships "
-        "ORDER BY vocabulary_id_1, concept_code_1, predicate, vocabulary_id_2, concept_code_2"
+        "CREATE TABLE relationships AS SELECT vocabulary_id_1, concept_code_1, predicate, "
+        "vocabulary_id_2, concept_code_2, NULLIF(string_agg(DISTINCT assertion_source, '; ' "
+        "ORDER BY assertion_source), '') AS assertion_source FROM (SELECT vocabulary_id_1, "
+        "concept_code_1, trim(predicate) AS predicate, vocabulary_id_2, concept_code_2, "
+        "NULLIF(trim(assertion_source), '') AS assertion_source FROM typed_relationships) "
+        "GROUP BY ALL ORDER BY vocabulary_id_1, concept_code_1, predicate, vocabulary_id_2, "
+        "concept_code_2"
     )
     con.execute(
         "CREATE TABLE xrefs AS SELECT DISTINCT vocabulary_id, concept_code, trim(key_type) AS "
@@ -513,7 +612,6 @@ def _drop_working_tables(con: duckdb.DuckDBPyConnection) -> None:
         "synonym_rows",
         "source_aliases",
         *(f"typed_{name}" for name in TABLES),
-        *(f"raw_{name}" for name in TABLES),
     ):
         con.execute(f"DROP TABLE IF EXISTS {table}")
 

@@ -13,6 +13,7 @@ WHEEL_REQUIRED = {
     "biosemalign/py.typed",
     "biosemalign/profiles/defaults/faers_drug_normalization.yaml",
     "biosemalign/resources/registry.yaml",
+    "biosemalign/targets/rxnorm.yaml",
 }
 SDIST_REQUIRED = {
     "pyproject.toml",
@@ -26,6 +27,7 @@ SDIST_REQUIRED = {
     "src/biosemalign/py.typed",
     "src/biosemalign/profiles/defaults/faers_drug_normalization.yaml",
     "src/biosemalign/resources/registry.yaml",
+    "src/biosemalign/targets/rxnorm.yaml",
 }
 FORBIDDEN_COMPONENTS = {
     ".biosemalign_cache",

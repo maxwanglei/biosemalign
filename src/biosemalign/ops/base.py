@@ -30,10 +30,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CandidateSet",
+    "CodeSet",
+    "Coder",
     "FuseOp",
+    "Linker",
     "OpContext",
     "PassToNext",
     "ProposeOp",
+    "Resolver",
     "RetrieveOp",
     "TransformOp",
     "ValidateOp",
@@ -59,6 +63,12 @@ class CandidateSet:
 
     retriever: str
     candidates: list[CandidateConcept] = field(default_factory=list)
+
+
+#: The codes one coder attached to an SAU: candidates with their match
+#: evidence (method, score, matched name, asserting source), in the coder's
+#: ranked order. The module name for :class:`CandidateSet`.
+CodeSet = CandidateSet
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,3 +153,61 @@ class ValidateOp(Protocol):
         package: KnowledgePackage,
         sau: SemanticAlignmentUnit | None,
     ) -> list[ValidationFinding]: ...
+
+
+# -- the three modules (v0.3) ---------------------------------------------------
+#
+# Coding, linking, and resolution are the module names of the retrieve, fuse,
+# and propose stages. An operator may implement either spelling; the registry
+# adapts one that implements only the module name. The kernel contract is
+# unchanged: whatever the spelling, only the kernel validates and mints.
+
+
+@runtime_checkable
+class Coder(Protocol):
+    """Attaches codes to an SAU: ``(SAU) -> CodeSet``. Exact match, BM25, dense, ...
+
+    A coder returns evidence, never a decision: every code it finds, with how
+    it found it.
+    """
+
+    op_id: str
+    version: str
+    requires_network: bool
+
+    def code(self, sau: SemanticAlignmentUnit) -> CodeSet: ...
+
+
+@runtime_checkable
+class Linker(Protocol):
+    """Links codes toward the target: ``(SAU, CodeSets) -> KnowledgePackage``.
+
+    The package carries the codes, their equivalence groups, and the edges
+    that lead to the target granularity. The kernel derives the typed
+    ``LinkSet`` from it, after its own leakage filter, so a linker cannot
+    assert a link its evidence does not support.
+    """
+
+    op_id: str
+    version: str
+
+    def link(
+        self, sau: SemanticAlignmentUnit, code_sets: Sequence[CodeSet]
+    ) -> KnowledgePackage: ...
+
+
+@runtime_checkable
+class Resolver(Protocol):
+    """Decides from codes and links, or passes: ``(SAU, package) -> proposal | pass``."""
+
+    op_id: str
+    version: str
+    requires_network: bool
+
+    def resolve(
+        self, sau: SemanticAlignmentUnit, package: KnowledgePackage
+    ) -> AlignmentProposal | PassToNext: ...
+
+    def provenance(self) -> ModelProvenance:
+        """How the resolver is described in decision provenance."""
+        ...

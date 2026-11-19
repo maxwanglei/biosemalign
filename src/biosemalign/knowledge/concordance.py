@@ -9,7 +9,12 @@ automate.
 the profile permits (a concept's own vocabulary code, or cross-references such
 as ``UNII`` or ``UMLS_CUI``). If a group would hold two different codes from
 one vocabulary — a salt and its base, merged through an over-broad key — the
-grouping is reported as a conflict instead of being trusted.
+grouping is reported as a conflict instead of being trusted. A profile may
+narrow that check to the vocabularies whose codes are the answer (say RxNorm
+and RxNorm Extension): a SNOMED substance and the SNOMED product named after
+it, both mapped to one RxNorm ingredient, are then recorded together without
+making the target ambiguous. The listed vocabularies form one pool, so an
+RxNorm code and an RxNorm Extension code in one group conflict too.
 
 *Agreement counts sources, not vocabularies.* UMLS redistributes RxNorm and
 MeSH; RxNorm carries DrugBank and MeSH atoms. Each matched name carries the
@@ -45,10 +50,20 @@ def assess_concordance(
     equivalence_keys: Iterable[str],
     key_lookup: KeyLookup | None = None,
     source_aliases: Mapping[str, str] | None = None,
+    conflict_vocabularies: Iterable[str] | None = None,
 ) -> ConcordanceAssessment:
-    """Group exact matches by permitted equivalence keys and classify agreement."""
+    """Group exact matches by permitted equivalence keys and classify agreement.
+
+    ``conflict_vocabularies`` limits which duplicate codes make a group a
+    conflict; None means any vocabulary's.
+    """
     aliases = dict(source_aliases or {})
     allowed = set(equivalence_keys)
+    pool = (
+        {vocabulary.casefold() for vocabulary in conflict_vocabularies}
+        if conflict_vocabularies is not None
+        else None
+    )
 
     exact: dict[Member, CandidateConcept] = {}
     sources: dict[Member, set[str]] = {}
@@ -95,6 +110,10 @@ def assess_concordance(
     groups: list[EquivalenceGroup] = []
     for group_members in sorted(grouped.values()):
         vocabularies = [vocabulary.casefold() for vocabulary, _ in group_members]
+        if pool is None:
+            conflict = len(vocabularies) != len(set(vocabularies))
+        else:
+            conflict = sum(vocabulary in pool for vocabulary in vocabularies) > 1
         groups.append(
             EquivalenceGroup(
                 members=[
@@ -106,7 +125,7 @@ def assess_concordance(
                     for vocabulary, code in group_members
                 ],
                 sources=sorted(set().union(*(sources[m] for m in group_members))),
-                conflict=len(vocabularies) != len(set(vocabularies)),
+                conflict=conflict,
             )
         )
 

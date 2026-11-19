@@ -24,6 +24,7 @@ from biosemalign.ops.base import FuseOp, ProposeOp, RetrieveOp, TransformOp, Val
 from biosemalign.profiles.schema import OperatorConfig, TaskProfile, TierConfig
 from biosemalign.schemas.provenance import OperatorProvenance, TierProvenance, WorkflowProvenance
 from biosemalign.settings import Settings
+from biosemalign.targets.spec import TargetSpec
 from biosemalign.util import stable_digest
 
 __all__ = ["Cascade", "ParallelUnion", "Tier", "workflow_from_profile"]
@@ -142,15 +143,28 @@ class Cascade:
                     f"{profile.retrieval.maximum_candidates}"
                 )
 
-    def provenance(self, validators: Iterable[ValidateOp] = ()) -> WorkflowProvenance:
+    def provenance(
+        self, validators: Iterable[ValidateOp] = (), target_spec: TargetSpec | None = None
+    ) -> WorkflowProvenance:
+        """The workflow's identity: its operators, validators, and target spec.
+
+        The target spec decides what reaches which level and what is lost, so
+        a different spec is a different workflow, whatever the operators.
+        """
         tiers = tuple(tier.provenance() for tier in self.tiers)
         checks = tuple(_operator("validate", op) for op in validators)
-        payload = {
+        payload: dict[str, object] = {
             "tiers": [tier.model_dump(mode="json") for tier in tiers],
             "validators": [check.model_dump(mode="json") for check in checks],
         }
+        if target_spec is not None:
+            payload["target_spec"] = {"label": target_spec.label, "sha256": target_spec.digest}
         return WorkflowProvenance(
-            workflow_id=stable_digest(payload, length=16), tiers=tiers, validators=checks
+            workflow_id=stable_digest(payload, length=16),
+            tiers=tiers,
+            validators=checks,
+            target_spec=target_spec.label if target_spec is not None else None,
+            target_spec_sha256=target_spec.digest if target_spec is not None else None,
         )
 
 

@@ -134,7 +134,11 @@ class SAUBuilder:
             mention=mention,
             context=envelope,
             attributes=attributes,
-            task=request.to_task(),
+            task=request.to_task().model_copy(
+                # Which vocabularies may supply the source identity is the
+                # profile's policy, never the caller's.
+                update={"source_terminologies": list(self.profile.task.source_terminologies)}
+            ),
             provenance=self._stub_provenance(run),
             readiness=readiness,
         )

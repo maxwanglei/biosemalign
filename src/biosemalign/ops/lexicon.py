@@ -36,7 +36,7 @@ from biosemalign.ops.registry import register_op
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.schemas.base import BioSemAlignModel
 from biosemalign.schemas.decision import AlignmentProposal
-from biosemalign.schemas.knowledge import CandidateConcept, KnowledgePackage
+from biosemalign.schemas.knowledge import CandidateConcept, KnowledgePackage, QualifiedCode
 from biosemalign.schemas.provenance import ModelProvenance
 from biosemalign.schemas.sau import SemanticAlignmentUnit
 
@@ -137,6 +137,10 @@ class LexiconRetrieveOp:
             "respect_validity_dates": self.respect_validity_dates,
         }
 
+    def code(self, sau: SemanticAlignmentUnit) -> CandidateSet:
+        """The coding module's name for :meth:`retrieve`."""
+        return self.retrieve(sau)
+
     def retrieve(self, sau: SemanticAlignmentUnit) -> CandidateSet:
         text = sau.mention.retrieval_text or sau.mention.text
         vocabularies = list(self.resources)
@@ -224,6 +228,10 @@ class DenseRetrieveOp:
             "top_k": self.top_k,
         }
 
+    def code(self, sau: SemanticAlignmentUnit) -> CandidateSet:
+        """The coding module's name for :meth:`retrieve`."""
+        return self.retrieve(sau)
+
     def retrieve(self, sau: SemanticAlignmentUnit) -> CandidateSet:
         text = sau.mention.retrieval_text or sau.mention.text
         hits = self.index.search(text, list(self.resources), self.top_k)
@@ -248,13 +256,20 @@ class _ConcordanceOptions(BioSemAlignModel):
             "vocabulary in the bundle, i.e. cross-references to a served vocabulary."
         ),
     )
+    conflict_vocabularies: list[str] | None = Field(
+        default=None,
+        description=(
+            "Vocabularies whose duplicate codes make a group a conflict, as one pool, "
+            "e.g. ['RxNorm', 'RxNorm Extension']. Default: duplicates in any vocabulary."
+        ),
+    )
 
 
 class ConcordanceFuseOp:
     """The default fusion, plus a concordance assessment over exact matches."""
 
     op_id = "cross_vocab_concordance"
-    version = "0.1.0"
+    version = "0.2.0"
 
     def __init__(
         self,
@@ -262,6 +277,7 @@ class ConcordanceFuseOp:
         profile: TaskProfile,
         *,
         equivalence_keys: Collection[str] | None = None,
+        conflict_vocabularies: Collection[str] | None = None,
     ) -> None:
         self.inner = KnowledgePackageFuseOp(knowledge, profile)
         self.store = knowledge.lexicon
@@ -271,11 +287,23 @@ class ConcordanceFuseOp:
             else [profile.task.target_terminology]
         )
         self.equivalence_keys = sorted(set(equivalence_keys or served))
+        self.conflict_vocabularies = (
+            sorted(set(conflict_vocabularies)) if conflict_vocabularies is not None else None
+        )
         self.source_aliases = dict(self.store.manifest.source_aliases) if self.store else {}
 
     @property
     def options(self) -> dict[str, Any]:
-        return {"equivalence_keys": list(self.equivalence_keys)}
+        options: dict[str, Any] = {"equivalence_keys": list(self.equivalence_keys)}
+        if self.conflict_vocabularies is not None:
+            options["conflict_vocabularies"] = list(self.conflict_vocabularies)
+        return options
+
+    def link(
+        self, sau: SemanticAlignmentUnit, code_sets: Sequence[CandidateSet]
+    ) -> KnowledgePackage:
+        """The linking module's name for :meth:`fuse`."""
+        return self.fuse(sau, code_sets)
 
     def fuse(
         self, sau: SemanticAlignmentUnit, candidate_sets: Sequence[CandidateSet]
@@ -286,6 +314,7 @@ class ConcordanceFuseOp:
             equivalence_keys=self.equivalence_keys,
             key_lookup=self._keys if self.store is not None else None,
             source_aliases=self.source_aliases,
+            conflict_vocabularies=self.conflict_vocabularies,
         )
         return package.model_copy(update={"concordance": assessment})
 
@@ -312,15 +341,27 @@ class _ConcordantOptions(BioSemAlignModel):
 
 
 class ConcordantExactProposeOp:
-    """Propose only when exact matches agree on one target concept.
+    """Propose only when exact matches agree on one identity that reaches the target.
 
-    The identity comes from concordance; relationship, granularity, and
-    semantic loss come from the deterministic projection rules, unchanged.
+    The identity comes from concordance: the agreed group's one target
+    terminology concept or, failing that, its one concept from a permitted
+    source terminology (``task.source_terminologies``). The identity must then
+    reach the requested granularity *in the target terminology* — an RxNorm
+    ingredient for an ingredient-level task — or the tier passes, naming what
+    was identified, so a later tier starts from it. Relationship, granularity,
+    and semantic loss come from the deterministic projection rules, unchanged.
     """
 
     op_id = "concordant_exact"
-    version = "0.1.0"
+    version = "0.3.0"
     requires_network = False
+
+    #: Pass reasons when the identity reaches nothing at the requested level,
+    #: or reaches it only outside the target terminology. ``concordant_exact``
+    #: keeps the v0.2 drug-specific names; the ``concordant`` resolver uses
+    #: the target-neutral ones.
+    LEGACY_REASONS = ("no_ingredient_link", "non_target_ingredient")
+    REASONS = ("no_target_link", "non_target_code")
 
     def __init__(
         self,
@@ -329,9 +370,20 @@ class ConcordantExactProposeOp:
         *,
         authority_sources: Collection[str] = (),
         minimum_mention_length: int = 5,
+        reasons: tuple[str, str] = LEGACY_REASONS,
+        op_id: str | None = None,
     ) -> None:
+        if op_id is not None:
+            self.op_id = op_id
+        self.no_link_reason, self.foreign_reason = reasons
         self.adjudicator = adjudicator
         self.target = profile.task.target_terminology
+        #: Where an identity may come from, in order of preference.
+        self.identity_vocabularies = [self.target] + [
+            vocabulary
+            for vocabulary in profile.task.source_terminologies
+            if vocabulary.casefold() != self.target.casefold()
+        ]
         self.authority_sources = frozenset(authority_sources)
         self.minimum_mention_length = minimum_mention_length
 
@@ -342,6 +394,12 @@ class ConcordantExactProposeOp:
             "minimum_mention_length": self.minimum_mention_length,
             "model": self.adjudicator.provenance().model_name,
         }
+
+    def resolve(
+        self, sau: SemanticAlignmentUnit, package: KnowledgePackage
+    ) -> AlignmentProposal | PassToNext:
+        """The resolution module's name for :meth:`propose`."""
+        return self.propose(sau, package)
 
     def propose(
         self, sau: SemanticAlignmentUnit, package: KnowledgePackage
@@ -371,19 +429,63 @@ class ConcordantExactProposeOp:
                 f"only {', '.join(group.sources)} asserts this name, which is not an "
                 "authority source",
             )
-        targets = [m for m in group.members if m.vocabulary.casefold() == self.target.casefold()]
-        if len(targets) != 1:
-            return PassToNext(
-                "no_target_concept",
-                f"the agreed entity has {len(targets)} {self.target} concepts",
-            )
-        identity = package.candidate_by_qualified_id(self.target, targets[0].concept_code)
+        member = self._identity(group.members)
+        if isinstance(member, PassToNext):
+            return member
+        identity = package.candidate_by_qualified_id(member.vocabulary, member.concept_code)
         if identity is None:
             return PassToNext(
                 "target_not_in_package",
-                f"{self.target} {targets[0].concept_code} fell outside the bounded package",
+                f"{member.vocabulary} {member.concept_code} fell outside the bounded package",
+            )
+        granularity = sau.task.desired_granularity
+        # The kernel's typed links say where the identity leads; without them
+        # (another fuser) the same rule is applied to the identity directly.
+        targets = (
+            [
+                (t.vocabulary, t.concept_code)
+                for t in package.links.targets_of(identity.vocabulary, identity.candidate_id)
+            ]
+            if package.links is not None
+            else [
+                (t.vocabulary, t.concept_id)
+                for t in self.adjudicator.targets_for(identity, granularity)
+            ]
+        )
+        described = (
+            f"{identity.vocabulary}:{identity.candidate_id} ({identity.concept_class or 'concept'}"
+            f", {identity.preferred_label!r})"
+        )
+        if not targets:
+            return PassToNext(
+                self.no_link_reason,
+                f"{described} has no path to a {self.target} {granularity or 'target'}",
+            )
+        foreign = [t for t in targets if t[0].casefold() != self.target.casefold()]
+        if foreign:
+            return PassToNext(
+                self.foreign_reason,
+                f"{described} reaches "
+                + ", ".join(f"{vocabulary}:{code}" for vocabulary, code in foreign)
+                + f", outside {self.target}",
             )
         return self.adjudicator.project(sau, identity)
+
+    def _identity(self, members: Sequence[QualifiedCode]) -> QualifiedCode | PassToNext:
+        """The group's one concept from the most preferred identity vocabulary."""
+        for vocabulary in self.identity_vocabularies:
+            found = [m for m in members if m.vocabulary.casefold() == vocabulary.casefold()]
+            if len(found) == 1:
+                return found[0]
+            if len(found) > 1:
+                return PassToNext(
+                    "no_target_concept",
+                    f"the agreed entity has {len(found)} {vocabulary} concepts",
+                )
+        return PassToNext(
+            "no_target_concept",
+            f"the agreed entity has no {' or '.join(self.identity_vocabularies)} concept",
+        )
 
     def provenance(self) -> ModelProvenance:
         return self.adjudicator.provenance()
@@ -425,6 +527,7 @@ def _concordance(context: OpContext, options: Mapping[str, Any]) -> ConcordanceF
         _knowledge(context, "cross_vocab_concordance"),
         context.profile,
         equivalence_keys=parsed.equivalence_keys,
+        conflict_vocabularies=parsed.conflict_vocabularies,
     )
 
 
@@ -441,6 +544,29 @@ def _concordant_exact(context: OpContext, options: Mapping[str, Any]) -> Concord
         authority_sources=parsed.authority_sources,
         minimum_mention_length=parsed.minimum_mention_length,
     )
+
+
+def _concordant(context: OpContext, options: Mapping[str, Any]) -> ConcordantExactProposeOp:
+    """The concordant resolver under its v0.3 name, with target-neutral pass reasons."""
+    parsed = _ConcordantOptions.model_validate(options)
+    adjudicator = context.adjudicator
+    if not isinstance(adjudicator, DeterministicAdjudicator):
+        adjudicator = DeterministicAdjudicator(context.profile)
+    return ConcordantExactProposeOp(
+        adjudicator,
+        context.profile,
+        authority_sources=parsed.authority_sources,
+        minimum_mention_length=parsed.minimum_mention_length,
+        reasons=ConcordantExactProposeOp.REASONS,
+        op_id="concordant",
+    )
+
+
+def _exact(context: OpContext, options: Mapping[str, Any]) -> LexiconRetrieveOp:
+    """Exact coding over a lexicon bundle: the ``lexicon`` coder, exact names only."""
+    if "methods" in options:
+        raise ConfigurationError("the 'exact' coder matches exact names only; drop 'methods'")
+    return _lexicon(context, {**options, "methods": ["exact"]})
 
 
 def _dense(context: OpContext, options: Mapping[str, Any]) -> DenseRetrieveOp:
@@ -469,3 +595,7 @@ register_op("retrieve", "lexicon", _lexicon)
 register_op("retrieve", "dense", _dense)
 register_op("fuse", "cross_vocab_concordance", _concordance)
 register_op("propose", "concordant_exact", _concordant_exact)
+# Module names (v0.3): coding, linking, and resolution.
+register_op("code", "exact", _exact)
+register_op("link", "concordance", _concordance)
+register_op("resolve", "concordant", _concordant)

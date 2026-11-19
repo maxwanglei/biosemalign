@@ -27,6 +27,25 @@ class MappingTask(BioSemAlignModel):
     desired_granularity: str | None = Field(
         default=None, description="Requested level, e.g. 'ingredient', 'precise_ingredient'."
     )
+    source_terminologies: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Vocabularies besides the target that a source-level concept may come from; "
+            "analysis-level concepts always come from the target terminology."
+        ),
+    )
+
+    def source_vocabulary(self, vocabulary: str | None) -> str:
+        """Where a source-level concept of ``vocabulary`` is looked up.
+
+        A permitted source terminology is looked up in itself; anything else
+        in the target, where an impostor finds no evidence and fails.
+        """
+        if vocabulary is not None and vocabulary.casefold() in {
+            v.casefold() for v in self.source_terminologies
+        }:
+            return vocabulary
+        return self.target_terminology
 
 
 class AlignmentRequest(VersionedModel):
