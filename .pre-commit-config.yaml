@@ -1,3 +1,8 @@
+# `pre-commit install` registers both hook types; hooks without explicit
+# stages run on commit only.
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.5.7
@@ -36,3 +41,13 @@ repos:
         language: system
         pass_filenames: false
         files: ^src/biosemalign/schemas/
+
+      # The test suite is not under version control, so CI cannot enforce the
+      # coverage gate; run it before every push from the checkout that has it.
+      - id: pytest-coverage
+        name: pytest with branch coverage gate
+        entry: pytest --cov=biosemalign -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

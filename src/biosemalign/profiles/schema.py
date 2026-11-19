@@ -7,6 +7,8 @@ startup rather than silently widening what the adjudicator may consider.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field, field_validator, model_validator
 
 from biosemalign.enums import MentionMode, RelationshipType, SemanticType, SourceType
@@ -17,11 +19,14 @@ __all__ = [
     "AdjudicationConfig",
     "InputConfig",
     "KnowledgeConfig",
+    "OperatorConfig",
     "RetrievalConfig",
     "RoutingConfig",
     "TaskConfig",
     "TaskProfile",
+    "TierConfig",
     "ValidationConfig",
+    "WorkflowConfig",
 ]
 
 _OCCURRENCE_ONLY_MAPPING_KEY_FIELDS = frozenset(
@@ -31,6 +36,24 @@ _SUPPORTED_MAPPING_KEY_CONTEXT_FIELDS = frozenset(
     (set(ContextEnvelope.model_fields) | set(ContextualAttributes.model_fields))
     - _OCCURRENCE_ONLY_MAPPING_KEY_FIELDS
 )
+#: Context a proposer can be blinded to. Fields mirrored as contextual
+#: attributes are excluded: a decision must preserve those, so hiding them
+#: from the proposer would make every proposal fail attribute validation.
+_BLINDABLE_CONTEXT_FIELDS = frozenset(
+    set(ContextEnvelope.model_fields) - set(ContextualAttributes.model_fields)
+)
+
+
+class OperatorConfig(BioSemAlignModel):
+    """A registered operator and its options, e.g. ``{op: rxnav}``."""
+
+    op: str = Field(min_length=1)
+    options: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_bare_name(cls, value: Any) -> Any:
+        return {"op": value} if isinstance(value, str) else value
 
 
 class TaskConfig(BioSemAlignModel):
@@ -115,6 +138,27 @@ class KnowledgeConfig(BioSemAlignModel):
             "associations would bias candidate discovery (§6.2)."
         ),
     )
+    blinded_context_fields: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Context fields withheld from proposers because they can carry the "
+            "studied outcome (an indication, a publication's disease terms). "
+            "Resolution that depends on them would misclassify exposure "
+            "differentially by outcome."
+        ),
+    )
+
+    @field_validator("blinded_context_fields")
+    @classmethod
+    def _validate_blinded_fields(cls, fields: list[str]) -> list[str]:
+        unknown = sorted(set(fields) - _BLINDABLE_CONTEXT_FIELDS)
+        if unknown:
+            raise ValueError(
+                f"blinded_context_fields contains fields that cannot be blinded: {unknown}; "
+                "contextual-attribute fields (route, dose, unit, species) must be preserved "
+                f"by every decision. Blindable fields: {sorted(_BLINDABLE_CONTEXT_FIELDS)}"
+            )
+        return sorted(set(fields))
 
     @model_validator(mode="after")
     def _no_predicate_in_both_lists(self) -> KnowledgeConfig:
@@ -122,11 +166,6 @@ class KnowledgeConfig(BioSemAlignModel):
         if overlap:
             raise ValueError(
                 f"predicates appear in both allowed and prohibited lists: {sorted(overlap)}"
-            )
-        if self.secondary_resources:
-            raise ValueError(
-                "secondary_resources are not queried in v0.1; remove them rather than "
-                "silently omitting their evidence"
             )
         return self
 
@@ -192,6 +231,15 @@ class AdjudicationConfig(BioSemAlignModel):
         description="Relationship classes the adjudicator may emit for this task.",
     )
     prompt_version: str | None = None
+    llm_max_candidates: int = Field(
+        default=15,
+        ge=1,
+        le=50,
+        description=(
+            "Candidates an LLM adjudicator is shown. Reranking accuracy degrades on longer "
+            "lists, so startup verification refuses retrieval.maximum_candidates above it."
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_candidate_constraint(self) -> AdjudicationConfig:
@@ -208,6 +256,13 @@ class ValidationConfig(BioSemAlignModel):
     preserve_combination_ingredients: bool = True
     prohibit_unretrieved_identifiers: bool = True
     flag_salt_active_moiety_conflation: bool = True
+    rules: list[OperatorConfig] = Field(
+        default_factory=lambda: [OperatorConfig(op="drug_semantics")],
+        description=(
+            "Validation operators run after the mandatory terminology checks, in "
+            "order. The terminology checks themselves cannot be removed."
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_bounded_identifiers(self) -> ValidationConfig:
@@ -240,6 +295,13 @@ class RoutingConfig(BioSemAlignModel):
             "automatically. Below this it is routed to review rather than rejected."
         ),
     )
+    calibration: str | None = Field(
+        default=None,
+        description=(
+            "Path to a calibration fitted by 'biosemalign calibrate'. When set, an eligible "
+            "decision is accepted automatically only above its tier's certified threshold."
+        ),
+    )
     rejection_lexical_similarity: float = Field(
         default=0.3,
         ge=0.0,
@@ -262,6 +324,35 @@ class RoutingConfig(BioSemAlignModel):
         return self
 
 
+class TierConfig(BioSemAlignModel):
+    """One tier of a workflow cascade."""
+
+    name: str = Field(min_length=1)
+    transforms: list[OperatorConfig] = Field(default_factory=list)
+    retrievers: list[OperatorConfig] = Field(
+        default_factory=lambda: [OperatorConfig(op="rxnav")],
+        min_length=1,
+        description="Queried in order; more than one forms a parallel union.",
+    )
+    fuser: OperatorConfig = Field(default_factory=lambda: OperatorConfig(op="knowledge_package"))
+    proposer: OperatorConfig = Field(default_factory=lambda: OperatorConfig(op="adjudicator"))
+
+
+class WorkflowConfig(BioSemAlignModel):
+    """A cascade of tiers; the first tier to propose hands off to the kernel."""
+
+    tiers: list[TierConfig] = Field(min_length=1)
+
+    @field_validator("tiers")
+    @classmethod
+    def _tier_names_are_unique(cls, tiers: list[TierConfig]) -> list[TierConfig]:
+        names = [tier.name for tier in tiers]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise ValueError(f"workflow tier names must be unique: {duplicates}")
+        return tiers
+
+
 class TaskProfile(BioSemAlignModel):
     """One project's complete configuration of the framework (§14)."""
 
@@ -275,6 +366,10 @@ class TaskProfile(BioSemAlignModel):
     adjudication: AdjudicationConfig = Field(default_factory=AdjudicationConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    workflow: WorkflowConfig | None = Field(
+        default=None,
+        description="Operator cascade; omitted means the single-tier v0.1 pipeline.",
+    )
 
     @model_validator(mode="after")
     def _target_terminology_is_a_declared_resource(self) -> TaskProfile:

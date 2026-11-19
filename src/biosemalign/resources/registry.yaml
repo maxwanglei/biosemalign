@@ -92,3 +92,34 @@ resources:
     cache_policy: none
     update_policy: on_vocabulary_refresh
     implemented: false
+
+  # A client-compiled lexicon bundle (biosemalign lexicon build). Every
+  # vocabulary in the bundle is served locally under its own resource name and
+  # takes precedence over a remote provider for the same name. Nothing leaves
+  # the deployment, so restricted enclaves may use it.
+  - name: LocalLexicon
+    provider: lexicon
+    version: null
+    access_method: local_database
+    base_url: null
+    license_required: false
+    license_note: >-
+      A bundle carries the licence class of each vocabulary in its manifest.
+      Holding those licences, and honouring them in any output, is the
+      responsibility of the organization that compiled and deploys it.
+    redistribution_allowed: false
+    credential_env_var: null
+    operations:
+      - search
+      - lookup
+      - relationships
+      - validate_concept
+      - equivalence_keys
+    permitted_environments:
+      - local
+      - institutional_server
+      - hpc
+      - restricted_enclave
+    cache_policy: none
+    update_policy: on_bundle_rebuild
+

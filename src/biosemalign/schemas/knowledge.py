@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import Field, field_validator
 
-from biosemalign.enums import Authority, ConceptStatus, RetrievalChannel
+from biosemalign.enums import Authority, ConceptStatus, ConcordanceState, RetrievalChannel
 from biosemalign.schemas.base import BioSemAlignModel, ExtensibleModel, VersionedModel
 from biosemalign.schemas.provenance import ResourceProvenance, require_unique_resources
 
@@ -12,10 +12,13 @@ __all__ = [
     "CandidateConcept",
     "CodingPolicy",
     "ConceptEvidence",
+    "ConcordanceAssessment",
     "Definition",
+    "EquivalenceGroup",
     "KnowledgeConflict",
     "KnowledgePackage",
     "KnowledgeStatement",
+    "QualifiedCode",
     "RetrievalEvidence",
 ]
 
@@ -166,6 +169,41 @@ class KnowledgeConflict(BioSemAlignModel):
     lower_authority: Authority
 
 
+class QualifiedCode(BioSemAlignModel):
+    """A concept identified by vocabulary and code, e.g. ``UNII:GEB06NHM23``."""
+
+    vocabulary: str = Field(min_length=1)
+    concept_code: str = Field(min_length=1)
+    label: str | None = None
+
+
+class EquivalenceGroup(BioSemAlignModel):
+    """Exact matches that permitted equivalence keys resolve to one entity."""
+
+    members: list[QualifiedCode] = Field(min_length=1)
+    sources: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Independent sources asserting the matched names, canonicalized so that a "
+            "redistributed atom counts once under its originating source."
+        ),
+    )
+    conflict: bool = Field(
+        default=False,
+        description="True when the group holds two codes from one vocabulary.",
+    )
+
+
+class ConcordanceAssessment(BioSemAlignModel):
+    """Cross-vocabulary agreement among exact matches for one mention (v0.2)."""
+
+    state: ConcordanceState
+    groups: list[EquivalenceGroup] = Field(default_factory=list)
+    equivalence_keys: list[str] = Field(
+        default_factory=list, description="Key types permitted to establish equivalence."
+    )
+
+
 class KnowledgePackage(VersionedModel):
     """The bounded, provenance-linked evidence bundle for one SAU (§11.4)."""
 
@@ -177,6 +215,7 @@ class KnowledgePackage(VersionedModel):
     coding_policies: list[CodingPolicy] = Field(default_factory=list)
     conflicts: list[KnowledgeConflict] = Field(default_factory=list)
     resource_provenance: list[ResourceProvenance] = Field(default_factory=list)
+    concordance: ConcordanceAssessment | None = None
 
     @field_validator("resource_provenance")
     @classmethod
@@ -285,6 +324,20 @@ class KnowledgePackage(VersionedModel):
         if len(vocabularies) != 1:
             return None
         return matches[0] if matches else None
+
+    def equivalents_of(self, vocabulary: str, concept_id: str) -> list[QualifiedCode]:
+        """Every code in the concordance group that contains this concept.
+
+        Empty when no concordance was assessed or the concept matched no name
+        exactly. Decisions report this list; it is derived, never proposed.
+        """
+        if self.concordance is None:
+            return []
+        wanted = (vocabulary.casefold(), concept_id)
+        for group in self.concordance.groups:
+            if any((m.vocabulary.casefold(), m.concept_code) == wanted for m in group.members):
+                return [member.model_copy() for member in group.members]
+        return []
 
     def candidate_by_qualified_id(
         self, vocabulary: str, candidate_id: str

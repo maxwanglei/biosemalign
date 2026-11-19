@@ -193,6 +193,47 @@
       "title": "ConceptStatus",
       "type": "string"
     },
+    "ConcordanceAssessment": {
+      "additionalProperties": false,
+      "description": "Cross-vocabulary agreement among exact matches for one mention (v0.2).",
+      "properties": {
+        "equivalence_keys": {
+          "description": "Key types permitted to establish equivalence.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Equivalence Keys",
+          "type": "array"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/EquivalenceGroup"
+          },
+          "title": "Groups",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/ConcordanceState"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "ConcordanceAssessment",
+      "type": "object"
+    },
+    "ConcordanceState": {
+      "description": "How exact matches across vocabularies relate to one another (v0.2).\n\nAgreement is counted over independent asserting sources, not vocabularies:\na string that UMLS and RxNorm both carry because UMLS redistributes RxNorm\nis one assertion, not two.",
+      "enum": [
+        "NO_EXACT_MATCH",
+        "SINGLE_SOURCE_EXACT",
+        "MULTI_SOURCE_CONCORDANT",
+        "CROSS_VOCAB_COLLISION",
+        "EQUIVALENCE_CONFLICT"
+      ],
+      "title": "ConcordanceState",
+      "type": "string"
+    },
     "Definition": {
       "additionalProperties": false,
       "description": "A textual definition, with the resource that asserted it.",
@@ -216,6 +257,39 @@
         "source"
       ],
       "title": "Definition",
+      "type": "object"
+    },
+    "EquivalenceGroup": {
+      "additionalProperties": false,
+      "description": "Exact matches that permitted equivalence keys resolve to one entity.",
+      "properties": {
+        "conflict": {
+          "default": false,
+          "description": "True when the group holds two codes from one vocabulary.",
+          "title": "Conflict",
+          "type": "boolean"
+        },
+        "members": {
+          "items": {
+            "$ref": "#/$defs/QualifiedCode"
+          },
+          "minItems": 1,
+          "title": "Members",
+          "type": "array"
+        },
+        "sources": {
+          "description": "Independent sources asserting the matched names, canonicalized so that a redistributed atom counts once under its originating source.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "members"
+      ],
+      "title": "EquivalenceGroup",
       "type": "object"
     },
     "KnowledgeConflict": {
@@ -355,6 +429,40 @@
       "title": "KnowledgeStatement",
       "type": "object"
     },
+    "QualifiedCode": {
+      "additionalProperties": false,
+      "description": "A concept identified by vocabulary and code, e.g. ``UNII:GEB06NHM23``.",
+      "properties": {
+        "concept_code": {
+          "minLength": 1,
+          "title": "Concept Code",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "vocabulary": {
+          "minLength": 1,
+          "title": "Vocabulary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vocabulary",
+        "concept_code"
+      ],
+      "title": "QualifiedCode",
+      "type": "object"
+    },
     "ResourceMode": {
       "description": "External-resource access policy for a run (§20.3).",
       "enum": [
@@ -392,6 +500,19 @@
           "minimum": 0,
           "title": "Cache Hits",
           "type": "integer"
+        },
+        "content_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Digest of the local snapshot served, when the resource is a file bundle.",
+          "title": "Content Sha256"
         },
         "mode": {
           "$ref": "#/$defs/ResourceMode",
@@ -554,6 +675,17 @@
       "title": "Coding Policies",
       "type": "array"
     },
+    "concordance": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ConcordanceAssessment"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "conflicts": {
       "items": {
         "$ref": "#/$defs/KnowledgeConflict"
@@ -593,7 +725,7 @@
       "type": "string"
     },
     "schema_version": {
-      "default": "0.2.0",
+      "default": "0.3.0",
       "description": "Version of the BioSemAlign core schema this record conforms to.",
       "title": "Schema Version",
       "type": "string"
@@ -611,5 +743,5 @@
   ],
   "title": "KnowledgePackage",
   "type": "object",
-  "x-biosemalign-schema-version": "0.2.0"
+  "x-biosemalign-schema-version": "0.3.0"
 }

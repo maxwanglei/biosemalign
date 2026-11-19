@@ -29,7 +29,7 @@ __all__ = [
     "deep_freeze",
 ]
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 """Version of the core data contracts.
 
 Bump the minor component when a field is added, the major component when a

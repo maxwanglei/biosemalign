@@ -22,7 +22,7 @@ from biosemalign.schemas.knowledge import (
 )
 from biosemalign.schemas.provenance import ResourceProvenance
 
-__all__ = ["build_knowledge_package", "derive_coding_policies"]
+__all__ = ["build_knowledge_package", "derive_coding_policies", "enforce_relationship_policy"]
 
 log = get_logger(__name__)
 
@@ -140,3 +140,49 @@ def build_knowledge_package(
         coding_policies=derive_coding_policies(profile),
         resource_provenance=resource_provenance,
     )
+
+
+def enforce_relationship_policy(
+    package: KnowledgePackage, profile: TaskProfile
+) -> KnowledgePackage:
+    """Remove every statement the profile does not permit, wherever it appears.
+
+    The kernel applies this to whatever a fusion operator returns. Fusion is
+    replaceable, so the outcome-leakage guard cannot live only inside it; this
+    second filter is what keeps a custom fuser from reintroducing prohibited
+    predicates (§6.2).
+    """
+    permits = profile.knowledge.permits
+    blocked: set[str] = set()
+
+    def keep(statements: list[KnowledgeStatement]) -> list[KnowledgeStatement]:
+        kept = [statement for statement in statements if permits(statement.predicate)]
+        blocked.update(s.predicate for s in statements if not permits(s.predicate))
+        return kept
+
+    candidates = [
+        candidate.model_copy(update={"relationships": keep(candidate.relationships)})
+        for candidate in package.candidates
+    ]
+    conflicts = [
+        conflict.model_copy(update={"statements": keep(conflict.statements)})
+        for conflict in package.conflicts
+    ]
+    filtered = package.model_copy(
+        update={
+            "candidates": candidates,
+            "ontology_guidance": keep(package.ontology_guidance),
+            "umls_guidance": keep(package.umls_guidance),
+            "kg_guidance": keep(package.kg_guidance),
+            "conflicts": conflicts,
+        }
+    )
+    if not blocked:
+        return package
+    log.warning(
+        "knowledge_package.blocked_predicates",
+        sau_id=package.sau_id,
+        predicates=sorted(blocked),
+        note="prohibited by profile; removed by the kernel after fusion",
+    )
+    return filtered

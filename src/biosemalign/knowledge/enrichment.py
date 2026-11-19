@@ -8,11 +8,9 @@ rejects with a plain-text error page rather than JSON.
 
 from __future__ import annotations
 
-from biosemalign.knowledge.providers.rxnorm import (
-    PREDICATE_TO_TTY,
-    RELA_ONLY_PREDICATES,
-    RxNavProvider,
-)
+from biosemalign.knowledge.providers.base import KnowledgeProvider
+from biosemalign.knowledge.providers.lexicon import LexiconProvider
+from biosemalign.knowledge.providers.rxnorm import PREDICATE_TO_TTY, RELA_ONLY_PREDICATES
 from biosemalign.logging import get_logger
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.schemas.knowledge import CandidateConcept
@@ -21,24 +19,42 @@ __all__ = ["enrich_candidates", "supported_predicates"]
 
 log = get_logger(__name__)
 
+#: Unsupported-predicate combinations already reported, so a long batch logs
+#: each once instead of once per candidate.
+_REPORTED: set[tuple[str, str, tuple[str, ...]]] = set()
 
-def supported_predicates(profile: TaskProfile) -> list[str]:
-    """Allowlisted predicates that the RxNorm provider can actually retrieve.
+
+def supported_predicates(
+    profile: TaskProfile, provider: KnowledgeProvider | None = None
+) -> list[str]:
+    """Allowlisted predicates that the provider can actually retrieve.
 
     Predicates the profile allows but the provider cannot serve are dropped
     with a warning rather than sent and failed — the profile is not wrong to
     describe the task, it just names something this provider does not model.
+    A lexicon serves exactly the predicates its bundle holds.
     """
-    retrievable = set(PREDICATE_TO_TTY) | RELA_ONLY_PREDICATES
+    retrievable = (
+        set(provider.available_predicates())
+        if isinstance(provider, LexiconProvider)
+        else set(PREDICATE_TO_TTY) | RELA_ONLY_PREDICATES
+    )
     allowed = profile.knowledge.allowed_relationships or sorted(retrievable)
     supported = [p for p in allowed if p in retrievable]
     unsupported = [p for p in allowed if p not in retrievable]
-    if unsupported:
+    report = (
+        str(getattr(provider, "provider_name", "rxnav")),
+        str(getattr(provider, "vocabulary", "")),
+        tuple(unsupported),
+    )
+    if unsupported and report not in _REPORTED:
+        _REPORTED.add(report)
         log.warning(
             "enrichment.unsupported_predicates",
             profile=profile.profile_name,
             predicates=unsupported,
-            note="not retrievable from RxNav; see /relatypes.json for the valid set",
+            provider=getattr(provider, "provider_name", "rxnav"),
+            note="not retrievable from this provider",
         )
     return supported
 
@@ -46,7 +62,7 @@ def supported_predicates(profile: TaskProfile) -> list[str]:
 def enrich_candidates(
     candidates: list[CandidateConcept],
     *,
-    provider: RxNavProvider,
+    provider: KnowledgeProvider,
     profile: TaskProfile,
     max_hops: int = 1,
 ) -> list[CandidateConcept]:
@@ -56,15 +72,20 @@ def enrich_candidates(
     ranked alternatives remain in the package but are not expanded. This keeps
     large studies from paying relationship-call costs for candidates the
     deterministic adjudicator cannot reach.
+
+    Only candidates from the provider's own vocabulary are enriched; matches
+    in other vocabularies are concordance evidence, not projection sources.
     """
-    predicates = supported_predicates(profile)
+    predicates = supported_predicates(profile, provider)
     if not predicates:
         return candidates
 
+    vocabulary = str(getattr(provider, "vocabulary", "")).casefold()
+    own = [c for c in candidates if not vocabulary or c.vocabulary.casefold() == vocabulary]
     batch_size = profile.retrieval.progressive_enrichment_batch_size
-    for start in range(0, len(candidates), batch_size):
-        stop = min(start + batch_size, len(candidates))
-        for candidate in candidates[start:stop]:
+    for start in range(0, len(own), batch_size):
+        stop = min(start + batch_size, len(own))
+        for candidate in own[start:stop]:
             _enrich_one(
                 candidate,
                 provider=provider,
@@ -72,7 +93,7 @@ def enrich_candidates(
                 predicates=predicates,
                 max_hops=max_hops,
             )
-        if _target_granularity_is_evidenced(candidates[:stop], profile):
+        if _target_granularity_is_evidenced(own[:stop], profile):
             break
 
     return candidates
@@ -81,7 +102,7 @@ def enrich_candidates(
 def _enrich_one(
     candidate: CandidateConcept,
     *,
-    provider: RxNavProvider,
+    provider: KnowledgeProvider,
     profile: TaskProfile,
     predicates: list[str],
     max_hops: int,

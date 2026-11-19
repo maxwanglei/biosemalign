@@ -17,7 +17,7 @@ from biosemalign.enums import (
     RelationshipType,
     Severity,
 )
-from biosemalign.knowledge.providers.rxnorm import RxNavProvider
+from biosemalign.knowledge.providers.base import KnowledgeProvider
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.schemas.decision import AlignmentProposal, SelectedConcept, ValidationFinding
 from biosemalign.schemas.knowledge import ConceptEvidence, KnowledgePackage
@@ -43,7 +43,7 @@ def validate_terminology(
     package: KnowledgePackage,
     profile: TaskProfile,
     *,
-    provider: RxNavProvider | None = None,
+    provider: KnowledgeProvider | None = None,
 ) -> list[ValidationFinding]:
     """Validate proposal structure and every concept-bearing field."""
     findings = _validate_structure(proposal, package)
@@ -399,7 +399,7 @@ def _validate_concept(
     concept: SelectedConcept,
     evidence: ConceptEvidence | None,
     profile: TaskProfile,
-    provider: RxNavProvider | None,
+    provider: KnowledgeProvider | None,
 ) -> list[ValidationFinding]:
     if evidence is None:
         if not profile.validation.prohibit_unretrieved_identifiers:
@@ -503,7 +503,7 @@ def _canonical_status(
     field_name: str,
     concept: SelectedConcept,
     evidence: ConceptEvidence,
-    provider: RxNavProvider | None,
+    provider: KnowledgeProvider | None,
 ) -> tuple[ConceptStatus, list[ValidationFinding]]:
     findings: list[ValidationFinding] = []
     status = evidence.status

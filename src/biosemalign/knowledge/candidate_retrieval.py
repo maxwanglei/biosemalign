@@ -14,6 +14,8 @@ never be mistaken for a current concept.
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from biosemalign.enums import RetrievalChannel
 from biosemalign.knowledge.providers.rxnorm import RxNavProvider
 from biosemalign.logging import get_logger
@@ -37,6 +39,9 @@ CHANNEL_PRIORITY: dict[RetrievalChannel, int] = {
     RetrievalChannel.TERMINOLOGY_APPROXIMATE_CURRENT: 2,
     RetrievalChannel.SPELLING_SUGGESTION: 3,
     RetrievalChannel.TERMINOLOGY_APPROXIMATE_HISTORICAL: 4,
+    # Ranked-retrieval scores are as fuzzy as approximate matching.
+    RetrievalChannel.LEXICAL: 2,
+    RetrievalChannel.EMBEDDING: 2,
 }
 
 
@@ -45,21 +50,37 @@ class CandidateRetriever:
 
     version = RETRIEVER_VERSION
 
-    def __init__(self, provider: RxNavProvider, profile: TaskProfile) -> None:
+    def __init__(
+        self,
+        provider: RxNavProvider,
+        profile: TaskProfile,
+        *,
+        channels: Collection[RetrievalChannel] | None = None,
+    ) -> None:
         self.provider = provider
         self.profile = profile
+        # A workflow tier may restrict retrieval to some channels (an exact-only
+        # first tier, say) without re-implementing the escalation order below.
+        self.channels = None if channels is None else frozenset(channels)
+
+    def _enabled(self, *channels: RetrievalChannel) -> bool:
+        return self.channels is None or any(channel in self.channels for channel in channels)
 
     def retrieve(self, sau: SemanticAlignmentUnit) -> list[CandidateConcept]:
         """Retrieve candidates for one SAU, in channel order."""
         config = self.profile.retrieval
-        term = sau.mention.text
+        term = sau.mention.retrieval_text or sau.mention.text
         collected: list[CandidateConcept] = []
 
-        if config.exact_lookup:
+        if config.exact_lookup and self._enabled(
+            RetrievalChannel.EXACT_LOOKUP, RetrievalChannel.NORMALIZED_LOOKUP
+        ):
             collected.extend(self._exact(term))
 
-        if config.terminology_approximate_match and (
-            not collected or self._needs_corroboration(term, collected)
+        if (
+            config.terminology_approximate_match
+            and self._enabled(RetrievalChannel.TERMINOLOGY_APPROXIMATE_CURRENT)
+            and (not collected or self._needs_corroboration(term, collected))
         ):
             approximate = self._approximate(term, current_only=True)
             collected.extend(approximate)
@@ -69,16 +90,24 @@ class CandidateRetriever:
             # an independent spelling channel. FROZEN executes this same plan
             # from its release-bound snapshot; a missing response remains a
             # hard cache miss and can never fall through to the network.
-            if approximate and self._needs_corroboration(term, approximate):
+            if (
+                approximate
+                and self._enabled(RetrievalChannel.SPELLING_SUGGESTION)
+                and self._needs_corroboration(term, approximate)
+            ):
                 collected.extend(self._spelling(term))
 
-        if not collected:
+        if not collected and self._enabled(RetrievalChannel.SPELLING_SUGGESTION):
             collected.extend(self._spelling(term))
 
         # Last resort only. A historical hit is better than no candidate at all
         # for a withdrawn product named in an old report, but it is flagged so
         # that routing can refuse to auto-accept it.
-        if config.include_historical_candidates and not collected:
+        if (
+            config.include_historical_candidates
+            and not collected
+            and self._enabled(RetrievalChannel.TERMINOLOGY_APPROXIMATE_HISTORICAL)
+        ):
             collected.extend(self._approximate(term, current_only=False))
 
         log.debug(

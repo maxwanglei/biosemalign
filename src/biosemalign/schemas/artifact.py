@@ -8,7 +8,7 @@ that full evidence chain together in JSONL output.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
@@ -71,6 +71,8 @@ class AlignmentArtifact(VersionedModel):
         if self.validation != self.decision.validation:
             raise ValueError("artifact validation does not match the routed decision")
         _validate_provenance_consistency(self)
+        _validate_resolution_trace(self)
+        _validate_concordance_fields(self)
         if self.decision.source_value != self.sau.source.raw_value:
             raise ValueError("decision source value does not match the SAU source")
         if self.decision.record_id != self.sau.source.record_id:
@@ -166,6 +168,43 @@ def _validate_provenance_consistency(artifact: AlignmentArtifact) -> None:
             or decided.network_calls < packaged.network_calls
         ):
             raise ValueError("decision resource counters precede the Knowledge Package snapshot")
+
+
+def _validate_concordance_fields(artifact: AlignmentArtifact) -> None:
+    """Concordance on the decision must be exactly what the package derives."""
+    package = artifact.knowledge_package
+    decision = artifact.decision
+    expected_state = package.concordance.state if package.concordance is not None else None
+    source_level = decision.source_level_concept
+    expected_codes = (
+        package.equivalents_of(artifact.sau.task.target_terminology, source_level.concept_id)
+        if source_level is not None
+        else []
+    )
+    if decision.concordance_state is not expected_state:
+        raise ValueError("decision concordance state does not match the knowledge package")
+    if decision.matched_codes != expected_codes:
+        raise ValueError("decision matched codes are not the package's equivalence group")
+
+
+def _validate_resolution_trace(artifact: AlignmentArtifact) -> None:
+    """Keep tier attribution consistent with the workflow and the proposal."""
+    provenance = artifact.decision.provenance
+    trace = provenance.resolution
+    if trace is None:
+        return
+    attempted = [attempt.tier for attempt in trace.attempts]
+    if provenance.workflow is not None:
+        configured = [tier.name for tier in provenance.workflow.tiers]
+        if attempted != configured[: len(attempted)]:
+            raise ValueError("resolution trace tiers do not follow the recorded workflow order")
+        if trace.resolved_by_tier is None and attempted != configured:
+            raise ValueError("an exhausted cascade must record an attempt for every tier")
+    if trace.resolved_by_tier is None and not (
+        artifact.proposal.decision is DecisionType.ABSTAINED
+        and artifact.proposal.requested_human_review
+    ):
+        raise ValueError("an exhausted cascade must abstain and request human review")
 
 
 def _validate_verdict(artifact: AlignmentArtifact) -> None:
@@ -308,20 +347,61 @@ def _validate_routing_features(artifact: AlignmentArtifact) -> None:
         raise ValueError("review-required validation status must route to human review")
 
 
+#: Optional fields added to nested contracts in schema 0.3.0, as paths into the
+#: hashed payload (``*`` matches every list item). An artifact written earlier
+#: was hashed without them, so they are dropped — only while still at their
+#: empty default — before its content hash is recomputed.
+_FIELDS_ADDED_IN_0_3_0: tuple[tuple[str, ...], ...] = (
+    ("sau", "mention", "retrieval_text"),
+    ("sau", "provenance", "workflow"),
+    ("sau", "provenance", "resolution"),
+    ("sau", "provenance", "resources", "*", "content_sha256"),
+    ("knowledge_package", "concordance"),
+    ("knowledge_package", "resource_provenance", "*", "content_sha256"),
+    ("decision", "provenance", "workflow"),
+    ("decision", "provenance", "resolution"),
+    ("decision", "provenance", "memo"),
+    ("sau", "provenance", "memo"),
+    ("decision", "provenance", "resources", "*", "content_sha256"),
+    ("decision", "concordance_state"),
+    ("decision", "matched_codes"),
+)
+
+
+def _schema_version_tuple(version: str) -> tuple[int, ...] | None:
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except ValueError:
+        return None
+
+
+def _drop_default(node: Any, path: tuple[str, ...]) -> None:
+    head, *rest = path
+    if head == "*":
+        for item in node if isinstance(node, list) else []:
+            _drop_default(item, tuple(rest))
+    elif isinstance(node, dict):
+        if not rest:
+            if node.get(head) in (None, [], {}):
+                node.pop(head, None)
+        elif head in node:
+            _drop_default(node[head], tuple(rest))
+
+
 def _validate_artifact_id(artifact: AlignmentArtifact) -> None:
-    expected = stable_id(
-        "ART",
-        {
-            "run_id": artifact.run_id,
-            "sau": artifact.sau.model_dump(mode="json"),
-            "knowledge_package": artifact.knowledge_package.model_dump(mode="json"),
-            "proposal": artifact.proposal.model_dump(mode="json"),
-            "validation": artifact.validation.model_dump(mode="json"),
-            "decision": artifact.decision.model_dump(mode="json"),
-        },
-        length=32,
-    )
-    if artifact.artifact_id != expected:
+    payload: dict[str, Any] = {
+        "run_id": artifact.run_id,
+        "sau": artifact.sau.model_dump(mode="json"),
+        "knowledge_package": artifact.knowledge_package.model_dump(mode="json"),
+        "proposal": artifact.proposal.model_dump(mode="json"),
+        "validation": artifact.validation.model_dump(mode="json"),
+        "decision": artifact.decision.model_dump(mode="json"),
+    }
+    version = _schema_version_tuple(artifact.schema_version)
+    if version is not None and version < (0, 3, 0):
+        for path in _FIELDS_ADDED_IN_0_3_0:
+            _drop_default(payload, path)
+    if artifact.artifact_id != stable_id("ART", payload, length=32):
         raise ValueError("artifact_id does not match its canonical evidence payload")
 
 

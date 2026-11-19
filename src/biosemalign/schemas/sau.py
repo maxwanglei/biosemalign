@@ -31,6 +31,14 @@ class Mention(BioSemAlignModel):
 
     text: str = Field(description="The mention exactly as it appears in the source.")
     normalized_text: str = Field(description="Whitespace-collapsed, case-folded form.")
+    retrieval_text: str | None = Field(
+        default=None,
+        description=(
+            "Canonicalized form that retrievers query instead of ``text``, set by "
+            "transform operators. It never replaces the source mention: identity "
+            "claims such as EXACT are still judged against ``text``."
+        ),
+    )
     start: int | None = Field(default=None, description="Character offset into the source text.")
     end: int | None = None
     semantic_types: list[SemanticType] = Field(

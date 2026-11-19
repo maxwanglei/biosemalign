@@ -145,6 +145,10 @@ def align_batch(
         int,
         typer.Option("--checkpoint-every", min=1, help="Durably checkpoint after N rows."),
     ] = 100,
+    memo: Annotated[
+        Path | None,
+        typer.Option("--memo", help="Persistent crosswalk memo reused across runs (SQLite)."),
+    ] = None,
 ) -> None:
     """Align a batch table, writing a crosswalk plus auditable JSONL artifacts.
 
@@ -208,6 +212,8 @@ def align_batch(
         manifest_path.unlink(missing_ok=True)
 
     with _pipeline(profile, mode, cache_dir) as pipeline:
+        if memo is not None:
+            pipeline.attach_memo(memo)
         profile_hash = stable_digest(pipeline.profile.model_dump(mode="json"))
         if state and state.get("profile_sha256") != profile_hash:
             raise typer.BadParameter("cannot resume: effective profile changed since checkpoint")
@@ -510,6 +516,10 @@ def evaluate(
     report: Annotated[
         Path | None, typer.Option("--report", help="Write the report as JSON here.")
     ] = None,
+    calibration: Annotated[
+        Path | None,
+        typer.Option(help="Refuse gold cases this calibration was fitted on."),
+    ] = None,
 ) -> None:
     """Compare predictions against a case-ID keyed gold standard (§22)."""
     from biosemalign.evaluation.metrics import (
@@ -519,6 +529,8 @@ def evaluate(
 
     try:
         gold_cases = list(read_models(gold, GoldMapping))
+        if calibration is not None:
+            _require_disjoint_from_calibration(gold_cases, calibration)
         prediction_items = list(_read_prediction_decisions(predictions))
         evaluation = evaluate_predictions(gold_cases, prediction_items)
     except ValueError as exc:
@@ -549,6 +561,109 @@ def evaluate(
         raise typer.Exit(code=1)
 
 
+def _require_disjoint_from_calibration(gold_cases: list[Any], path: Path) -> None:
+    from biosemalign.routing.conformal import Calibration, case_digest
+
+    fitted_on = set(Calibration.load(path).case_digests)
+    overlap = sorted(case.case_id for case in gold_cases if case_digest(case.case_id) in fitted_on)
+    if overlap:
+        raise ValueError(
+            f"{len(overlap)} evaluation case(s) were used to fit the calibration "
+            f"({', '.join(overlap[:5])}); evaluate on held-out cases only"
+        )
+
+
+@app.command()
+def calibrate(
+    gold: Annotated[Path, typer.Option("--gold", help="Calibration gold mappings as JSONL.")],
+    predictions: Annotated[
+        Path, typer.Option("--predictions", help="Records or decisions from an uncalibrated run.")
+    ],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Calibration JSON to write.")],
+    alpha: Annotated[
+        float, typer.Option(help="Highest tolerated error rate among automatic acceptances.")
+    ] = 0.05,
+    delta: Annotated[float, typer.Option(help="Allowed probability the guarantee fails.")] = 0.1,
+    min_cases: Annotated[
+        int, typer.Option(help="Eligible cases a tier needs for its own threshold.")
+    ] = 30,
+) -> None:
+    """Fit per-tier acceptance thresholds with a finite-sample error guarantee."""
+    from biosemalign.evaluation.metrics import GoldMapping
+    from biosemalign.exceptions import ConfigurationError
+    from biosemalign.routing.conformal import calibrate as fit
+
+    try:
+        decisions = [
+            item.decision if isinstance(item, EvaluationPrediction) else item
+            for item in _read_prediction_decisions(predictions)
+        ]
+        fitted = fit(
+            decisions,
+            read_models(gold, GoldMapping),
+            alpha=alpha,
+            delta=delta,
+            min_cases=min_cases,
+        )
+    except (ConfigurationError, ValueError) as exc:
+        typer.secho(f"cannot calibrate: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    settings = get_settings()
+    with atomic_text_writer(
+        output, dir_mode=settings.output_dir_mode, file_mode=settings.output_file_mode
+    ) as handle:
+        handle.write(fitted.model_dump_json(indent=2) + "\n")
+    typer.echo(f"wrote calibration {output} (digest {fitted.digest})")
+    for tier, threshold in sorted(fitted.thresholds.items()):
+        if threshold.threshold is None:
+            typer.echo(
+                f"  {tier}: nothing certified from {threshold.calibration_cases} eligible case(s)"
+            )
+        else:
+            typer.echo(
+                f"  {tier}: threshold {threshold.threshold:.2f}; {threshold.accepted} accepted, "
+                f"{threshold.errors} error(s); error rate <= {threshold.error_upper_bound:.3f}"
+            )
+
+
+@app.command()
+def verify(
+    input_path: Annotated[
+        Path, typer.Option("--input", "-i", help="Artifact or batch-record JSONL to verify.")
+    ],
+    profile: Annotated[
+        str | None,
+        typer.Option("--profile", "-p", help="Also check against the profile that produced them."),
+    ] = None,
+    show: Annotated[int, typer.Option(help="Invalid artifacts to describe in full.")] = 5,
+) -> None:
+    """Re-validate persisted artifacts instead of trusting where they came from."""
+    from biosemalign.profiles.loader import load_profile
+    from biosemalign.verification import verify_jsonl
+
+    task_profile = load_profile(profile) if profile is not None else None
+    verified = without_artifact = 0
+    invalid = []
+    for line, result in enumerate(verify_jsonl(input_path, profile=task_profile), start=1):
+        if result is None:
+            without_artifact += 1
+        elif result.valid:
+            verified += 1
+        else:
+            invalid.append((line, result))
+
+    typer.echo(f"verified: {verified}")
+    typer.echo(f"records without an artifact: {without_artifact}")
+    typer.echo(f"invalid: {len(invalid)}")
+    for line, result in invalid[:show]:
+        where = f"line {line}" + (f" (row {result.row_number})" if result.row_number else "")
+        typer.secho(f"  {where} {result.artifact_id or '<no id>'}", fg=typer.colors.RED)
+        for error in result.errors:
+            typer.echo(f"    - {error}")
+    if invalid:
+        raise typer.Exit(code=1)
+
+
 @app.command("cache-info")
 def cache_info(cache_dir: CacheOption = None) -> None:
     """Summarize the provider response cache."""
@@ -572,6 +687,169 @@ def cache_info(cache_dir: CacheOption = None) -> None:
         typer.echo(f"terminology releases: {', '.join(sorted(releases))}")
     for name in sorted(counts):
         typer.echo(f"  {name}: {counts[name]}")
+
+
+# -- lexicon bundles --------------------------------------------------------
+
+lexicon_app = typer.Typer(
+    help="Compile, import, and inspect local lexicon bundles.", no_args_is_help=True
+)
+app.add_typer(lexicon_app, name="lexicon")
+
+
+@lexicon_app.command("build")
+def lexicon_build(
+    source: Annotated[Path, typer.Option("--source", help="Directory of contract tables.")],
+    declaration: Annotated[
+        Path, typer.Option("--declaration", help="Vocabulary declaration (YAML or JSON).")
+    ],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Bundle directory to write.")],
+    overwrite: Annotated[bool, typer.Option(help="Replace an existing bundle.")] = False,
+) -> None:
+    """Validate contract tables and compile them into a pinned bundle."""
+    from biosemalign.exceptions import LexiconError
+    from biosemalign.knowledge.lexicon.build import build_lexicon, load_declaration
+
+    try:
+        manifest = build_lexicon(
+            source, output, declaration=load_declaration(declaration), overwrite=overwrite
+        )
+    except LexiconError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"wrote lexicon bundle {output}")
+    for name, count in sorted(manifest.row_counts.items()):
+        typer.echo(f"  {name}: {count}")
+    typer.echo(f"bundle sha256: {manifest.bundle_sha256}")
+    typer.echo(
+        f"use with: BIOSEMALIGN_LEXICON_PATH={output} "
+        f"BIOSEMALIGN_LEXICON_SHA256={manifest.bundle_sha256}"
+    )
+
+
+@lexicon_app.command("info")
+def lexicon_info(
+    bundle: Annotated[Path, typer.Argument(help="Bundle directory.")],
+    sha256: Annotated[
+        str | None, typer.Option("--sha256", help="Also require this pinned bundle digest.")
+    ] = None,
+) -> None:
+    """Verify a bundle's integrity, then describe what it serves."""
+    from biosemalign.exceptions import LexiconError
+    from biosemalign.knowledge.providers.lexicon import LexiconStore
+
+    try:
+        store = LexiconStore(bundle, expected_sha256=sha256)
+    except LexiconError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    manifest = store.manifest
+    store.close()
+    typer.echo(f"bundle {bundle}: integrity verified")
+    typer.echo(f"  bundle sha256: {manifest.bundle_sha256}")
+    typer.echo(f"  built by {manifest.builder} (DuckDB {manifest.duckdb_version})")
+    for vocabulary in manifest.vocabularies:
+        count = manifest.row_counts.get(f"concepts:{vocabulary.vocabulary_id}", 0)
+        typer.echo(
+            f"  {vocabulary.vocabulary_id} {vocabulary.release} "
+            f"[{vocabulary.license}] {count} concepts"
+        )
+
+
+@lexicon_app.command("embed")
+def lexicon_embed(
+    bundle: Annotated[Path, typer.Argument(help="Bundle directory.")],
+    name: Annotated[str, typer.Option("--name", help="Name of the embedding index.")],
+    encoder: Annotated[
+        str, typer.Option(help="'hashing' (built-in baseline) or 'sentence_transformers'.")
+    ] = "hashing",
+    model: Annotated[
+        Path | None, typer.Option(help="Local sentence-transformers model directory.")
+    ] = None,
+    dimension: Annotated[int, typer.Option(help="Hashing encoder dimension.")] = 256,
+    overwrite: Annotated[bool, typer.Option(help="Replace an existing index.")] = False,
+) -> None:
+    """Encode every name of a bundle into a dense embedding index."""
+    from biosemalign.exceptions import ConfigurationError
+    from biosemalign.knowledge.lexicon.embeddings import (
+        HashingEncoder,
+        SentenceTransformerEncoder,
+        TextEncoder,
+        build_embedding_index,
+    )
+
+    try:
+        chosen: TextEncoder
+        if encoder == "hashing":
+            chosen = HashingEncoder(dimension)
+        elif encoder == "sentence_transformers" and model is not None:
+            chosen = SentenceTransformerEncoder(model)
+        else:
+            raise ConfigurationError(
+                "use --encoder hashing, or --encoder sentence_transformers with --model"
+            )
+        manifest = build_embedding_index(bundle, chosen, name=name, overwrite=overwrite)
+    except ConfigurationError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(
+        f"wrote embedding index {name!r}: {manifest.vectors} vectors from {manifest.model_id} "
+        f"({manifest.dimension} dimensions)"
+    )
+
+
+@lexicon_app.command("import-omop")
+def lexicon_import_omop(
+    athena: Annotated[Path, typer.Option("--athena", help="Unzipped Athena download.")],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Directory for contract tables.")],
+    vocabulary: Annotated[
+        list[str], typer.Option("--vocabulary", help="Vocabulary to import (repeatable).")
+    ],
+    relationship_map: Annotated[
+        Path | None,
+        typer.Option(help="YAML mapping of OMOP relationship_id to engine predicate."),
+    ] = None,
+    ancestors: Annotated[
+        bool, typer.Option(help="Derive has_ingredient edges from CONCEPT_ANCESTOR.")
+    ] = True,
+    license_class: Annotated[
+        str, typer.Option("--license", help="Licence class recorded for each vocabulary.")
+    ] = "unspecified",
+) -> None:
+    """Convert OMOP vocabulary tables into lexicon contract tables."""
+    import yaml
+
+    from biosemalign.exceptions import LexiconError
+    from biosemalign.knowledge.lexicon.omop import import_omop
+
+    mapping = (
+        yaml.safe_load(relationship_map.read_text(encoding="utf-8"))
+        if relationship_map is not None
+        else None
+    )
+    try:
+        report = import_omop(
+            athena,
+            output,
+            vocabularies=vocabulary,
+            relationship_map=mapping,
+            derive_ingredients=ancestors,
+            license=license_class,
+        )
+    except LexiconError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"wrote contract tables for {', '.join(report.vocabularies)} to {output}")
+    for name, count in sorted(report.row_counts.items()):
+        typer.echo(f"  {name}: {count}")
+    if report.unmapped_relationships:
+        typer.echo("relationships left out (no engine predicate mapped):")
+        for relationship, count in report.unmapped_relationships.items():
+            typer.echo(f"  {relationship}: {count}")
+    typer.echo(
+        f"next: biosemalign lexicon build --source {output} "
+        f"--declaration {output / 'vocabularies.yaml'} --output <bundle>"
+    )
 
 
 # -- helpers ---------------------------------------------------------------

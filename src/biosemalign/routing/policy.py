@@ -15,6 +15,7 @@ from __future__ import annotations
 from biosemalign.enums import (
     DecisionType,
     RelationshipType,
+    RetrievalChannel,
     RoutingStatus,
     ValidationStatus,
 )
@@ -25,7 +26,9 @@ from biosemalign.schemas.knowledge import KnowledgePackage
 
 __all__ = ["ROUTING_POLICY_VERSION", "route_decision"]
 
-ROUTING_POLICY_VERSION = "0.1.0"
+ROUTING_POLICY_VERSION = "0.2.0"
+
+_EXACT_CHANNELS = frozenset({RetrievalChannel.EXACT_LOOKUP, RetrievalChannel.NORMALIZED_LOOKUP})
 
 _BASE_AUTO_ACCEPTABLE_RELATIONS = frozenset(
     {RelationshipType.EXACT, RelationshipType.TARGET_BROADER_THAN_SOURCE}
@@ -71,7 +74,15 @@ def route_decision(
             reason = "no candidate concept was retrieved on any channel"
         if proposal.rationale:
             reason = f"{reason}: {proposal.rationale}"
-        return RoutingStatus.ABSTAIN, [reason]
+        # An abstention the adjudicator flagged for review, or one carrying
+        # validator warnings, has not been accepted; a person must see it.
+        reasons.append(reason)
+        if proposal.requested_human_review:
+            reasons.append("the adjudicator requested review")
+        reasons.extend(f"validator warning: {f.code}" for f in validation.warnings)
+        if len(reasons) > 1:
+            return RoutingStatus.HUMAN_REVIEW, reasons
+        return RoutingStatus.ABSTAIN, reasons
 
     if proposal.decision is DecisionType.INSUFFICIENT_CONTEXT:
         return RoutingStatus.HUMAN_REVIEW, [
@@ -91,6 +102,20 @@ def route_decision(
 
     if features.multiple_concepts_required and routing.combination_products_require_review:
         reasons.append("combination products are configured for review")
+
+    # Two target concepts that each carry the mention as an exact name are a
+    # homonym, not a match; ranking would only pick one by tie-break.
+    target = profile.task.target_terminology.casefold()
+    exact_targets = {
+        candidate.candidate_id
+        for candidate in package.candidates
+        if candidate.vocabulary.casefold() == target and candidate.channels & _EXACT_CHANNELS
+    }
+    if len(exact_targets) > 1:
+        reasons.append(
+            f"the mention is an exact name of {len(exact_targets)} "
+            f"{profile.task.target_terminology} concepts: {', '.join(sorted(exact_targets))}"
+        )
 
     if routing.unresolved_salt_ambiguity_requires_review:
         source_id = (

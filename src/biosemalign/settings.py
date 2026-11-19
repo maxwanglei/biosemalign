@@ -97,10 +97,29 @@ class Settings(BaseSettings):
         ),
     )
 
-    # --- LLM backend (§18.8). Unset in v0.1; the deterministic adjudicator needs none. ---
-    llm_base_url: str | None = None
+    # --- LLM backend (§18.8). The deterministic adjudicator needs none of these. ---
+    llm_base_url: str | None = Field(
+        default=None,
+        description="OpenAI-compatible endpoint, e.g. a vLLM server's http://localhost:8000/v1.",
+    )
     llm_api_key: SecretStr | None = None
     llm_model: str | None = None
+    llm_model_revision: str | None = Field(
+        default=None,
+        description=(
+            "Pinned model identity (checkpoint hash or tag). Required in FROZEN mode, where "
+            "model responses are replayed from the cache under this identity."
+        ),
+    )
+    llm_local_hosts: list[str] = Field(
+        default_factory=lambda: ["localhost", "127.0.0.1", "::1"],
+        description=(
+            "Hosts inside the deployment boundary, such as an enclave's own model server. "
+            "Prompts sent there are not egress; any other host needs the sensitive_text "
+            "egress class and HTTPS."
+        ),
+    )
+    llm_timeout_seconds: float = Field(default=120.0, gt=0)
 
     # --- Licensed resources ---
     umls_api_key: SecretStr | None = Field(
@@ -115,6 +134,24 @@ class Settings(BaseSettings):
             "Expected RxNorm release. Required in FROZEN mode; ONLINE validates it when set."
         ),
     )
+    # --- Local lexicon (v0.2) ---
+    lexicon_path: Path | None = Field(
+        default=None,
+        description=(
+            "Directory of a compiled lexicon bundle. Vocabularies it serves take precedence "
+            "over remote providers for the same resource name."
+        ),
+    )
+    embedding_model_path: Path | None = Field(
+        default=None,
+        description="Local sentence-transformers model directory for dense retrieval.",
+    )
+    lexicon_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Pinned bundle digest (manifest bundle_sha256). Required in FROZEN mode.",
+    )
+
     http_timeout_seconds: float = Field(default=30.0, gt=0)
     http_max_attempts: int = Field(default=4, ge=1)
     rxnav_requests_per_second: float = Field(

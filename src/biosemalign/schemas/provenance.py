@@ -13,15 +13,21 @@ from typing import Any
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from biosemalign.enums import ResourceMode
+from biosemalign.enums import ResourceMode, TierOutcome
 from biosemalign.schemas.base import BioSemAlignModel, VersionedModel, deep_freeze
 from biosemalign.util import utc_now
 
 __all__ = [
+    "MemoProvenance",
     "ModelProvenance",
+    "OperatorProvenance",
     "Provenance",
+    "ResolutionTrace",
     "ResourceProvenance",
     "RunContext",
+    "TierAttempt",
+    "TierProvenance",
+    "WorkflowProvenance",
     "require_unique_resources",
 ]
 
@@ -43,6 +49,10 @@ class ResourceProvenance(BioSemAlignModel):
     mode: ResourceMode = ResourceMode.ONLINE
     cache_hits: int = Field(default=0, ge=0)
     network_calls: int = Field(default=0, ge=0)
+    content_sha256: str | None = Field(
+        default=None,
+        description="Digest of the local snapshot served, when the resource is a file bundle.",
+    )
 
 
 def require_unique_resources(
@@ -83,6 +93,99 @@ class ModelProvenance(BioSemAlignModel):
         return self
 
 
+class OperatorProvenance(BioSemAlignModel):
+    """One configured operator in a workflow (v0.2)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: str = Field(description="Operator kind: transform, retrieve, fuse, propose, validate.")
+    op_id: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    options: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _freeze_options(self) -> OperatorProvenance:
+        object.__setattr__(self, "options", deep_freeze(self.options))
+        return self
+
+
+class TierProvenance(BioSemAlignModel):
+    """The operators one cascade tier runs, in execution order."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=1)
+    operators: tuple[OperatorProvenance, ...] = ()
+
+
+class WorkflowProvenance(BioSemAlignModel):
+    """The complete operator configuration a decision was produced under.
+
+    ``workflow_id`` is a digest of everything else here, so two decisions can
+    be compared for "same workflow" without diffing operator lists.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    workflow_id: str = Field(min_length=1)
+    tiers: tuple[TierProvenance, ...] = Field(min_length=1)
+    validators: tuple[OperatorProvenance, ...] = ()
+
+
+class TierAttempt(BioSemAlignModel):
+    """What one tier did with an SAU, and why it passed if it did."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tier: str = Field(min_length=1)
+    outcome: TierOutcome
+    reason: str | None = None
+    detail: str | None = None
+
+
+class ResolutionTrace(BioSemAlignModel):
+    """The path one SAU took through a workflow cascade.
+
+    Recorded per decision rather than per run: tier attribution is what makes
+    per-tier coverage and precision measurable, and a pass-through reason is
+    the only explanation of why a later, costlier tier was needed.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    attempts: tuple[TierAttempt, ...] = Field(min_length=1)
+    resolved_by_tier: str | None = Field(
+        default=None,
+        description="Tier whose proposal was validated; None when every tier passed.",
+    )
+    withheld_context: tuple[str, ...] = Field(
+        default=(),
+        description="Context fields hidden from proposers by the profile's blinding policy.",
+    )
+
+    @model_validator(mode="after")
+    def _attempts_are_coherent(self) -> ResolutionTrace:
+        *earlier, last = self.attempts
+        if any(attempt.outcome is not TierOutcome.PASSED for attempt in earlier):
+            raise ValueError("only the final tier attempt may resolve an SAU")
+        if last.outcome is TierOutcome.RESOLVED:
+            if self.resolved_by_tier != last.tier:
+                raise ValueError("resolved_by_tier must name the tier that resolved the SAU")
+        elif self.resolved_by_tier is not None:
+            raise ValueError("an exhausted cascade cannot name a resolving tier")
+        return self
+
+
+class MemoProvenance(BioSemAlignModel):
+    """Marks a decision whose proposal and evidence were reused from the memo."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str = Field(min_length=1)
+    original_run_id: str = Field(description="Run that resolved the input first.")
+    stored_at: datetime
+
+
 class Provenance(VersionedModel):
     """Everything needed to explain or reproduce one decision (§17.3)."""
 
@@ -101,6 +204,9 @@ class Provenance(VersionedModel):
     routing_policy_version: str | None = None
     resources: list[ResourceProvenance] = Field(default_factory=list)
     model: ModelProvenance | None = None
+    workflow: WorkflowProvenance | None = None
+    resolution: ResolutionTrace | None = None
+    memo: MemoProvenance | None = None
     human_review_status: str | None = Field(
         default=None,
         description="Set once the record has been through AL-MedLit review.",
@@ -141,6 +247,7 @@ class RunContext:
         self.validation_rules_version: str | None = None
         self.routing_policy_version: str | None = None
         self.model: ModelProvenance | None = None
+        self.workflow: WorkflowProvenance | None = None
         self._resources: dict[str, ResourceProvenance] = {}
 
     def record_resource(
@@ -196,4 +303,5 @@ class RunContext:
             routing_policy_version=self.routing_policy_version,
             resources=sorted(self._resources.values(), key=lambda r: r.resource_name),
             model=self.model,
+            workflow=self.workflow,
         )

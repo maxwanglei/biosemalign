@@ -33,6 +33,13 @@ class GoldMapping(VersionedModel):
         default=None,
         description="Benchmark slice used for category-level reporting.",
     )
+    stratum: str | None = Field(
+        default=None,
+        description=(
+            "Grouping for a differential-resolution audit, such as whether the report "
+            "carries the studied outcome. Resolution quality should not differ by it."
+        ),
+    )
     note: str | None = None
 
     @field_validator("case_id")

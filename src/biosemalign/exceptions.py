@@ -12,10 +12,12 @@ __all__ = [
     "CacheCorruption",
     "CacheMiss",
     "ConfigurationError",
+    "LexiconError",
     "ProfileError",
     "ProviderError",
     "ResourceNotPermitted",
     "UnsupportedInput",
+    "WorkflowViolation",
 ]
 
 
@@ -29,6 +31,10 @@ class ConfigurationError(BioSemAlignError):
 
 class ProfileError(ConfigurationError):
     """A task profile is missing, malformed, or internally inconsistent."""
+
+
+class LexiconError(ConfigurationError):
+    """A lexicon bundle or its source tables violate the lexicon contract."""
 
 
 class ResourceNotPermitted(BioSemAlignError):
@@ -67,3 +73,12 @@ class UnsupportedInput(BioSemAlignError):
 
 class AdjudicationFailure(BioSemAlignError):
     """The adjudicator produced nothing usable after its retries."""
+
+
+class WorkflowViolation(BioSemAlignError):
+    """A workflow operator broke the kernel's contract.
+
+    Raised when a transform rewrites source text or asserted context, or when
+    a proposer returns anything other than a proposal or a pass. These are
+    defects in the operator, not properties of the input.
+    """

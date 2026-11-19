@@ -44,6 +44,9 @@ CROSSWALK_COLUMNS: tuple[str, ...] = (
     "profile_version",
     "package_version",
     "run_id",
+    "concordance_state",
+    "matched_codes",
+    "resolved_by_tier",
 )
 
 
@@ -51,10 +54,17 @@ def decision_to_row(decision: AlignmentDecision) -> dict[str, Any]:
     """Flatten one decision into a crosswalk row."""
     source = decision.source_level_concept
     analysis = decision.analysis_level_concept
-    release = next(
-        (r.terminology_release for r in decision.provenance.resources if r.terminology_release),
-        None,
-    )
+    # With several vocabularies queried, the release that matters is the one
+    # of the vocabulary the decision is expressed in.
+    decided = analysis or source
+    resources = [r for r in decision.provenance.resources if r.terminology_release]
+    preferred = [
+        r
+        for r in resources
+        if decided is not None and r.resource_name.casefold() == decided.vocabulary.casefold()
+    ]
+    release = next((r.terminology_release for r in preferred or resources), None)
+    resolution = decision.provenance.resolution
     return {
         "sau_id": decision.sau_id,
         "reported_value": decision.source_value,
@@ -80,6 +90,13 @@ def decision_to_row(decision: AlignmentDecision) -> dict[str, Any]:
         "profile_version": decision.provenance.profile_version,
         "package_version": decision.provenance.package_version,
         "run_id": decision.provenance.run_id,
+        "concordance_state": (
+            decision.concordance_state.value if decision.concordance_state else None
+        ),
+        "matched_codes": "|".join(
+            f"{code.vocabulary}:{code.concept_code}" for code in decision.matched_codes
+        ),
+        "resolved_by_tier": resolution.resolved_by_tier if resolution is not None else None,
     }
 
 

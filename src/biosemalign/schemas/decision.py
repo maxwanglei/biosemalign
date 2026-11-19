@@ -17,6 +17,7 @@ from pydantic import Field
 
 from biosemalign.enums import (
     ConceptStatus,
+    ConcordanceState,
     DecisionType,
     ErrorCategory,
     RelationshipType,
@@ -26,6 +27,7 @@ from biosemalign.enums import (
     ValidationStatus,
 )
 from biosemalign.schemas.base import BioSemAlignModel, ExtensibleModel, VersionedModel
+from biosemalign.schemas.knowledge import QualifiedCode
 from biosemalign.schemas.provenance import Provenance
 
 __all__ = [
@@ -195,6 +197,17 @@ class AlignmentDecision(VersionedModel):
     routing_status: RoutingStatus
     routing_features: RoutingFeatures | None = None
     routing_reasons: list[str] = Field(default_factory=list)
+    concordance_state: ConcordanceState | None = Field(
+        default=None,
+        description="Cross-vocabulary agreement among exact matches, when assessed.",
+    )
+    matched_codes: list[QualifiedCode] = Field(
+        default_factory=list,
+        description=(
+            "Every vocabulary code equivalent to the source-level concept, from the "
+            "package's concordance assessment. Derived by the kernel, never proposed."
+        ),
+    )
     provenance: Provenance
 
     @property

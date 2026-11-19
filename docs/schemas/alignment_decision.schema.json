@@ -14,6 +14,18 @@
       "title": "ConceptStatus",
       "type": "string"
     },
+    "ConcordanceState": {
+      "description": "How exact matches across vocabularies relate to one another (v0.2).\n\nAgreement is counted over independent asserting sources, not vocabularies:\na string that UMLS and RxNorm both carry because UMLS redistributes RxNorm\nis one assertion, not two.",
+      "enum": [
+        "NO_EXACT_MATCH",
+        "SINGLE_SOURCE_EXACT",
+        "MULTI_SOURCE_CONCORDANT",
+        "CROSS_VOCAB_COLLISION",
+        "EQUIVALENCE_CONFLICT"
+      ],
+      "title": "ConcordanceState",
+      "type": "string"
+    },
     "DecisionType": {
       "description": "Top-level outcome of adjudication (§11.5).",
       "enum": [
@@ -45,6 +57,34 @@
       ],
       "title": "ErrorCategory",
       "type": "string"
+    },
+    "MemoProvenance": {
+      "additionalProperties": false,
+      "description": "Marks a decision whose proposal and evidence were reused from the memo.",
+      "properties": {
+        "key": {
+          "minLength": 1,
+          "title": "Key",
+          "type": "string"
+        },
+        "original_run_id": {
+          "description": "Run that resolved the input first.",
+          "title": "Original Run Id",
+          "type": "string"
+        },
+        "stored_at": {
+          "format": "date-time",
+          "title": "Stored At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "original_run_id",
+        "stored_at"
+      ],
+      "title": "MemoProvenance",
+      "type": "object"
     },
     "ModelProvenance": {
       "additionalProperties": false,
@@ -115,6 +155,39 @@
       "title": "ModelProvenance",
       "type": "object"
     },
+    "OperatorProvenance": {
+      "additionalProperties": false,
+      "description": "One configured operator in a workflow (v0.2).",
+      "properties": {
+        "kind": {
+          "description": "Operator kind: transform, retrieve, fuse, propose, validate.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "op_id": {
+          "minLength": 1,
+          "title": "Op Id",
+          "type": "string"
+        },
+        "options": {
+          "additionalProperties": true,
+          "title": "Options",
+          "type": "object"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "op_id",
+        "version"
+      ],
+      "title": "OperatorProvenance",
+      "type": "object"
+    },
     "Provenance": {
       "additionalProperties": false,
       "description": "Everything needed to explain or reproduce one decision (§17.3).",
@@ -156,6 +229,17 @@
           "description": "Non-secret fingerprint of the key used for SAU and mapping identifiers.",
           "title": "Identifier Hmac Key Fingerprint"
         },
+        "memo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MemoProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "model": {
           "anyOf": [
             {
@@ -178,6 +262,17 @@
         "profile_version": {
           "title": "Profile Version",
           "type": "string"
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResolutionTrace"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "resources": {
           "items": {
@@ -215,7 +310,7 @@
           "type": "string"
         },
         "schema_version": {
-          "default": "0.2.0",
+          "default": "0.3.0",
           "description": "Version of the BioSemAlign core schema this record conforms to.",
           "title": "Schema Version",
           "type": "string"
@@ -255,6 +350,17 @@
           ],
           "default": null,
           "title": "Validation Rules Version"
+        },
+        "workflow": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkflowProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -264,6 +370,40 @@
         "profile_version"
       ],
       "title": "Provenance",
+      "type": "object"
+    },
+    "QualifiedCode": {
+      "additionalProperties": false,
+      "description": "A concept identified by vocabulary and code, e.g. ``UNII:GEB06NHM23``.",
+      "properties": {
+        "concept_code": {
+          "minLength": 1,
+          "title": "Concept Code",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "vocabulary": {
+          "minLength": 1,
+          "title": "Vocabulary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vocabulary",
+        "concept_code"
+      ],
+      "title": "QualifiedCode",
       "type": "object"
     },
     "RelationshipType": {
@@ -285,6 +425,47 @@
       ],
       "title": "RelationshipType",
       "type": "string"
+    },
+    "ResolutionTrace": {
+      "additionalProperties": false,
+      "description": "The path one SAU took through a workflow cascade.\n\nRecorded per decision rather than per run: tier attribution is what makes\nper-tier coverage and precision measurable, and a pass-through reason is\nthe only explanation of why a later, costlier tier was needed.",
+      "properties": {
+        "attempts": {
+          "items": {
+            "$ref": "#/$defs/TierAttempt"
+          },
+          "minItems": 1,
+          "title": "Attempts",
+          "type": "array"
+        },
+        "resolved_by_tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Tier whose proposal was validated; None when every tier passed.",
+          "title": "Resolved By Tier"
+        },
+        "withheld_context": {
+          "default": [],
+          "description": "Context fields hidden from proposers by the profile's blinding policy.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Withheld Context",
+          "type": "array"
+        }
+      },
+      "required": [
+        "attempts"
+      ],
+      "title": "ResolutionTrace",
+      "type": "object"
     },
     "ResourceMode": {
       "description": "External-resource access policy for a run (§20.3).",
@@ -323,6 +504,19 @@
           "minimum": 0,
           "title": "Cache Hits",
           "type": "integer"
+        },
+        "content_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Digest of the local snapshot served, when the resource is a file bundle.",
+          "title": "Content Sha256"
         },
         "mode": {
           "$ref": "#/$defs/ResourceMode",
@@ -636,6 +830,83 @@
       "title": "Severity",
       "type": "string"
     },
+    "TierAttempt": {
+      "additionalProperties": false,
+      "description": "What one tier did with an SAU, and why it passed if it did.",
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "outcome": {
+          "$ref": "#/$defs/TierOutcome"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "tier": {
+          "minLength": 1,
+          "title": "Tier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tier",
+        "outcome"
+      ],
+      "title": "TierAttempt",
+      "type": "object"
+    },
+    "TierOutcome": {
+      "description": "What one tier of a workflow cascade did with an SAU (v0.2).",
+      "enum": [
+        "RESOLVED",
+        "PASSED"
+      ],
+      "title": "TierOutcome",
+      "type": "string"
+    },
+    "TierProvenance": {
+      "additionalProperties": false,
+      "description": "The operators one cascade tier runs, in execution order.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "operators": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/OperatorProvenance"
+          },
+          "title": "Operators",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "TierProvenance",
+      "type": "object"
+    },
     "ValidationFinding": {
       "additionalProperties": false,
       "description": "One thing the deterministic validator noticed.",
@@ -721,6 +992,39 @@
       ],
       "title": "ValidationStatus",
       "type": "string"
+    },
+    "WorkflowProvenance": {
+      "additionalProperties": false,
+      "description": "The complete operator configuration a decision was produced under.\n\n``workflow_id`` is a digest of everything else here, so two decisions can\nbe compared for \"same workflow\" without diffing operator lists.",
+      "properties": {
+        "tiers": {
+          "items": {
+            "$ref": "#/$defs/TierProvenance"
+          },
+          "minItems": 1,
+          "title": "Tiers",
+          "type": "array"
+        },
+        "validators": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/OperatorProvenance"
+          },
+          "title": "Validators",
+          "type": "array"
+        },
+        "workflow_id": {
+          "minLength": 1,
+          "title": "Workflow Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workflow_id",
+        "tiers"
+      ],
+      "title": "WorkflowProvenance",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -738,6 +1042,18 @@
       ],
       "default": null
     },
+    "concordance_state": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ConcordanceState"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Cross-vocabulary agreement among exact matches, when assessed."
+    },
     "decision": {
       "$ref": "#/$defs/DecisionType"
     },
@@ -753,6 +1069,14 @@
       "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
       "title": "Extensions",
       "type": "object"
+    },
+    "matched_codes": {
+      "description": "Every vocabulary code equivalent to the source-level concept, from the package's concordance assessment. Derived by the kernel, never proposed.",
+      "items": {
+        "$ref": "#/$defs/QualifiedCode"
+      },
+      "title": "Matched Codes",
+      "type": "array"
     },
     "missing_information": {
       "items": {
@@ -822,7 +1146,7 @@
       "type": "string"
     },
     "schema_version": {
-      "default": "0.2.0",
+      "default": "0.3.0",
       "description": "Version of the BioSemAlign core schema this record conforms to.",
       "title": "Schema Version",
       "type": "string"
@@ -886,5 +1210,5 @@
   ],
   "title": "AlignmentDecision",
   "type": "object",
-  "x-biosemalign-schema-version": "0.2.0"
+  "x-biosemalign-schema-version": "0.3.0"
 }

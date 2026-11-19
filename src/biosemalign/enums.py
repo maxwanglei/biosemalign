@@ -11,6 +11,7 @@ from enum import StrEnum
 __all__ = [
     "Authority",
     "ConceptStatus",
+    "ConcordanceState",
     "DecisionType",
     "EgressDataClass",
     "ErrorCategory",
@@ -24,6 +25,7 @@ __all__ = [
     "SemanticType",
     "Severity",
     "SourceType",
+    "TierOutcome",
     "ValidationStatus",
 ]
 
@@ -302,3 +304,33 @@ class EgressDataClass(StrEnum):
 
     DIRECT_IDENTIFIER = "direct_identifier"
     """Person, patient, report, or other directly identifying values."""
+
+
+class TierOutcome(StrEnum):
+    """What one tier of a workflow cascade did with an SAU (v0.2)."""
+
+    #: The tier's proposer produced a proposal; the kernel validated and routed it.
+    RESOLVED = "RESOLVED"
+    #: The tier's proposer declined and handed the SAU to the next tier.
+    PASSED = "PASSED"
+
+
+class ConcordanceState(StrEnum):
+    """How exact matches across vocabularies relate to one another (v0.2).
+
+    Agreement is counted over independent asserting sources, not vocabularies:
+    a string that UMLS and RxNorm both carry because UMLS redistributes RxNorm
+    is one assertion, not two.
+    """
+
+    #: No vocabulary matched the mention exactly.
+    NO_EXACT_MATCH = "NO_EXACT_MATCH"
+    #: One equivalence group, asserted by a single independent source.
+    SINGLE_SOURCE_EXACT = "SINGLE_SOURCE_EXACT"
+    #: One equivalence group, asserted by two or more independent sources.
+    MULTI_SOURCE_CONCORDANT = "MULTI_SOURCE_CONCORDANT"
+    #: The mention names two or more distinct entities (a homonym or acronym).
+    CROSS_VOCAB_COLLISION = "CROSS_VOCAB_COLLISION"
+    #: Equivalence keys merged distinct concepts of one vocabulary, such as a
+    #: salt and its base; the grouping cannot be trusted.
+    EQUIVALENCE_CONFLICT = "EQUIVALENCE_CONFLICT"

@@ -6,14 +6,33 @@ from datetime import datetime
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from biosemalign.schemas.base import VersionedModel, deep_freeze
+from biosemalign.schemas.base import BioSemAlignModel, VersionedModel, deep_freeze
 from biosemalign.schemas.provenance import (
     ModelProvenance,
     ResourceProvenance,
+    WorkflowProvenance,
     require_unique_resources,
 )
 
-__all__ = ["ResearchRunManifest"]
+__all__ = ["ResearchRunManifest", "TierTiming"]
+
+
+class TierTiming(BioSemAlignModel):
+    """Work one cascade tier did during a run.
+
+    Timings live in the manifest, never in artifacts: wall-clock time differs
+    between identical runs and would break artifact reproducibility.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    attempts: int = Field(ge=0, description="SAUs the tier was asked to resolve.")
+    resolved: int = Field(ge=0, description="SAUs the tier resolved rather than passed.")
+    seconds: float = Field(ge=0.0, description="Wall-clock time spent in the tier.")
+
+    @property
+    def mean_seconds(self) -> float:
+        return self.seconds / self.attempts if self.attempts else 0.0
 
 
 class ResearchRunManifest(VersionedModel):
@@ -44,6 +63,14 @@ class ResearchRunManifest(VersionedModel):
     validation_rules_version: str | None = None
     routing_policy_version: str | None = None
     model: ModelProvenance | None = None
+    workflow: WorkflowProvenance | None = None
+    tier_timings: dict[str, TierTiming] = Field(
+        default_factory=dict,
+        description="Per-tier work in this invocation; a resumed run reports only its own.",
+    )
+    memo_hits: int | None = Field(
+        default=None, description="Decisions finalized from the persistent crosswalk memo."
+    )
     input_sha256: str
     output_sha256: dict[str, str] = Field(default_factory=dict)
     record_counts: dict[str, int] = Field(default_factory=dict)

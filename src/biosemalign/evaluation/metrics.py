@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 
+from pydantic import Field
+
 from biosemalign.enums import RoutingStatus
 from biosemalign.schemas.artifact import AlignmentArtifact
 from biosemalign.schemas.base import BioSemAlignModel
@@ -163,6 +165,35 @@ class CategoryMetrics(BioSemAlignModel):
         }
 
 
+class CumulativeTier(BioSemAlignModel):
+    """Automatic acceptance by the cascade truncated after one tier.
+
+    Exact, not an estimate: tiers run in order and a later tier cannot change
+    what an earlier one accepted, so the first *k* tiers of a full run accept
+    precisely what a run configured with only those tiers would.
+    """
+
+    tier: str
+    auto_accepted: int
+    auto_accept_correct: int
+    gold_cases: int
+
+    @property
+    def coverage(self) -> float:
+        return self.auto_accepted / self.gold_cases if self.gold_cases else 0.0
+
+    @property
+    def auto_accept_precision(self) -> float:
+        return self.auto_accept_correct / self.auto_accepted if self.auto_accepted else 0.0
+
+    def as_dict(self) -> dict[str, int | float | str]:
+        return {
+            **self.model_dump(),
+            "coverage": round(self.coverage, 4),
+            "auto_accept_precision": round(self.auto_accept_precision, 4),
+        }
+
+
 class EvaluationReport(BioSemAlignModel):
     """One-to-one accounting plus aggregate and category-level metrics."""
 
@@ -172,6 +203,27 @@ class EvaluationReport(BioSemAlignModel):
     missing_prediction_ids: list[str]
     unexpected_prediction_ids: list[str]
     prediction_mapping_keys: dict[str, str]
+    tiers: dict[str, CategoryMetrics] = Field(default_factory=dict)
+    cumulative_tiers: list[CumulativeTier] = Field(default_factory=list)
+    strata: dict[str, CategoryMetrics] = Field(default_factory=dict)
+
+    @property
+    def stratum_disparity(self) -> dict[str, float] | None:
+        """Largest gap between strata in coverage, accuracy, and precision.
+
+        A blinded pipeline should resolve reports equally well whether or not
+        they carry the studied outcome; a material gap is differential
+        misclassification of exposure.
+        """
+        if len(self.strata) < 2:
+            return None
+        values = list(self.strata.values())
+        return {
+            name: round(
+                max(getattr(m, name) for m in values) - min(getattr(m, name) for m in values), 4
+            )
+            for name in ("coverage", "accuracy", "auto_accept_precision")
+        }
 
     @property
     def complete(self) -> bool:
@@ -190,6 +242,10 @@ class EvaluationReport(BioSemAlignModel):
             "categories": {
                 name: metrics.as_dict() for name, metrics in sorted(self.categories.items())
             },
+            "tiers": {name: metrics.as_dict() for name, metrics in sorted(self.tiers.items())},
+            "cumulative_tiers": [tier.as_dict() for tier in self.cumulative_tiers],
+            "strata": {name: metrics.as_dict() for name, metrics in sorted(self.strata.items())},
+            "stratum_disparity": self.stratum_disparity,
         }
 
 
@@ -245,13 +301,11 @@ def _category_metrics(
         decision = prediction.decision
         evaluated += 1
         context_verified += int(bool(gold.context))
-        is_correct = {c.concept_id for c in decision.selected_concepts} == set(
-            gold.expected_concept_ids
-        )
-        correct += int(is_correct)
+        correct_here = is_correct(decision, gold)
+        correct += int(correct_here)
         if decision.routing_status is RoutingStatus.AUTO_ACCEPT:
             auto += 1
-            auto_correct += int(is_correct)
+            auto_correct += int(correct_here)
         elif decision.routing_status is RoutingStatus.HUMAN_REVIEW:
             reviewed += 1
         else:
@@ -341,6 +395,14 @@ def evaluate_predictions(
     grouped: dict[str, list[GoldMapping]] = {}
     for gold in gold_list:
         grouped.setdefault(gold.category or "uncategorized", []).append(gold)
+    by_tier: dict[str, list[GoldMapping]] = {}
+    by_stratum: dict[str, list[GoldMapping]] = {}
+    for gold in gold_list:
+        if gold.stratum is not None:
+            by_stratum.setdefault(gold.stratum, []).append(gold)
+        prediction = prediction_by_id.get(gold.case_id)
+        if prediction is not None:
+            by_tier.setdefault(resolving_tier(prediction.decision), []).append(gold)
 
     return EvaluationReport(
         prediction_cases=len(prediction_list),
@@ -356,7 +418,61 @@ def evaluate_predictions(
             for case_id, prediction in prediction_by_id.items()
             if prediction.mapping_key is not None
         },
+        tiers={tier: _category_metrics(cases, prediction_by_id) for tier, cases in by_tier.items()},
+        cumulative_tiers=_cumulative_tiers(gold_list, prediction_by_id),
+        strata={
+            stratum: _category_metrics(cases, prediction_by_id)
+            for stratum, cases in by_stratum.items()
+        },
     )
+
+
+def resolving_tier(decision: AlignmentDecision) -> str:
+    """The cascade tier a decision is attributed to.
+
+    ``exhausted`` when every tier passed, ``unattributed`` for decisions made
+    without a workflow trace (the stage-by-stage API, or v0.1 records).
+    """
+    trace = decision.provenance.resolution
+    if trace is None:
+        return "unattributed"
+    return trace.resolved_by_tier or "exhausted"
+
+
+def _cumulative_tiers(
+    gold_list: Sequence[GoldMapping], predictions: dict[str, EvaluationPrediction]
+) -> list[CumulativeTier]:
+    evaluated = [predictions[g.case_id] for g in gold_list if g.case_id in predictions]
+    # Truncation is exact only when every decision says which tier made it.
+    if not evaluated or any(p.decision.provenance.resolution is None for p in evaluated):
+        return []
+    workflow = evaluated[0].decision.provenance.workflow
+    order = [tier.name for tier in workflow.tiers] if workflow is not None else []
+    cumulative: list[CumulativeTier] = []
+    accepted = correct = 0
+    for tier in order:
+        for gold in gold_list:
+            candidate = predictions.get(gold.case_id)
+            if candidate is None or resolving_tier(candidate.decision) != tier:
+                continue
+            decision = candidate.decision
+            if decision.routing_status is RoutingStatus.AUTO_ACCEPT:
+                accepted += 1
+                correct += int(is_correct(decision, gold))
+        cumulative.append(
+            CumulativeTier(
+                tier=tier,
+                auto_accepted=accepted,
+                auto_accept_correct=correct,
+                gold_cases=len(gold_list),
+            )
+        )
+    return cumulative
+
+
+def is_correct(decision: AlignmentDecision, gold: GoldMapping) -> bool:
+    """A decision is correct when it selects exactly the expected concepts."""
+    return {c.concept_id for c in decision.selected_concepts} == set(gold.expected_concept_ids)
 
 
 def recall_at_k(

@@ -69,6 +69,39 @@
       "title": "ModelProvenance",
       "type": "object"
     },
+    "OperatorProvenance": {
+      "additionalProperties": false,
+      "description": "One configured operator in a workflow (v0.2).",
+      "properties": {
+        "kind": {
+          "description": "Operator kind: transform, retrieve, fuse, propose, validate.",
+          "title": "Kind",
+          "type": "string"
+        },
+        "op_id": {
+          "minLength": 1,
+          "title": "Op Id",
+          "type": "string"
+        },
+        "options": {
+          "additionalProperties": true,
+          "title": "Options",
+          "type": "object"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "op_id",
+        "version"
+      ],
+      "title": "OperatorProvenance",
+      "type": "object"
+    },
     "ResourceMode": {
       "description": "External-resource access policy for a run (§20.3).",
       "enum": [
@@ -106,6 +139,19 @@
           "minimum": 0,
           "title": "Cache Hits",
           "type": "integer"
+        },
+        "content_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Digest of the local snapshot served, when the resource is a file bundle.",
+          "title": "Content Sha256"
         },
         "mode": {
           "$ref": "#/$defs/ResourceMode",
@@ -155,6 +201,94 @@
         "provider_version"
       ],
       "title": "ResourceProvenance",
+      "type": "object"
+    },
+    "TierProvenance": {
+      "additionalProperties": false,
+      "description": "The operators one cascade tier runs, in execution order.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "operators": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/OperatorProvenance"
+          },
+          "title": "Operators",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "TierProvenance",
+      "type": "object"
+    },
+    "TierTiming": {
+      "additionalProperties": false,
+      "description": "Work one cascade tier did during a run.\n\nTimings live in the manifest, never in artifacts: wall-clock time differs\nbetween identical runs and would break artifact reproducibility.",
+      "properties": {
+        "attempts": {
+          "description": "SAUs the tier was asked to resolve.",
+          "minimum": 0,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "resolved": {
+          "description": "SAUs the tier resolved rather than passed.",
+          "minimum": 0,
+          "title": "Resolved",
+          "type": "integer"
+        },
+        "seconds": {
+          "description": "Wall-clock time spent in the tier.",
+          "minimum": 0.0,
+          "title": "Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "attempts",
+        "resolved",
+        "seconds"
+      ],
+      "title": "TierTiming",
+      "type": "object"
+    },
+    "WorkflowProvenance": {
+      "additionalProperties": false,
+      "description": "The complete operator configuration a decision was produced under.\n\n``workflow_id`` is a digest of everything else here, so two decisions can\nbe compared for \"same workflow\" without diffing operator lists.",
+      "properties": {
+        "tiers": {
+          "items": {
+            "$ref": "#/$defs/TierProvenance"
+          },
+          "minItems": 1,
+          "title": "Tiers",
+          "type": "array"
+        },
+        "validators": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/OperatorProvenance"
+          },
+          "title": "Validators",
+          "type": "array"
+        },
+        "workflow_id": {
+          "minLength": 1,
+          "title": "Workflow Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workflow_id",
+        "tiers"
+      ],
+      "title": "WorkflowProvenance",
       "type": "object"
     }
   },
@@ -262,6 +396,19 @@
       "title": "Manifest Version",
       "type": "string"
     },
+    "memo_hits": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Decisions finalized from the persistent crosswalk memo.",
+      "title": "Memo Hits"
+    },
     "model": {
       "anyOf": [
         {
@@ -351,7 +498,7 @@
       "type": "string"
     },
     "schema_version": {
-      "default": "0.2.0",
+      "default": "0.3.0",
       "description": "Version of the BioSemAlign core schema this record conforms to.",
       "title": "Schema Version",
       "type": "string"
@@ -365,6 +512,14 @@
       "title": "Started At",
       "type": "string"
     },
+    "tier_timings": {
+      "additionalProperties": {
+        "$ref": "#/$defs/TierTiming"
+      },
+      "description": "Per-tier work in this invocation; a resumed run reports only its own.",
+      "title": "Tier Timings",
+      "type": "object"
+    },
     "validation_rules_version": {
       "anyOf": [
         {
@@ -376,6 +531,17 @@
       ],
       "default": null,
       "title": "Validation Rules Version"
+    },
+    "workflow": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkflowProvenance"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "working_tree_dirty": {
       "anyOf": [
@@ -406,5 +572,5 @@
   ],
   "title": "ResearchRunManifest",
   "type": "object",
-  "x-biosemalign-schema-version": "0.2.0"
+  "x-biosemalign-schema-version": "0.3.0"
 }

@@ -10,9 +10,9 @@ separately.
 from __future__ import annotations
 
 import uuid
-from collections import OrderedDict
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
@@ -20,17 +20,17 @@ from biosemalign._version import __version__
 from biosemalign.adjudication.adjudicator import build_adjudicator
 from biosemalign.adjudication.backend import Adjudicator
 from biosemalign.enums import ResourceMode, SourceType
-from biosemalign.exceptions import UnsupportedInput
+from biosemalign.exceptions import ConfigurationError, UnsupportedInput
 from biosemalign.input.sau_builder import SAUBuilder
-from biosemalign.knowledge.candidate_fusion import fuse_candidates
-from biosemalign.knowledge.candidate_retrieval import CandidateRetriever
-from biosemalign.knowledge.enrichment import enrich_candidates
-from biosemalign.knowledge.package_builder import build_knowledge_package
 from biosemalign.knowledge.router import KnowledgeRouter
 from biosemalign.logging import get_logger
+from biosemalign.ops import OpContext
+from biosemalign.pipelines.kernel import AlignmentKernel, PackageCache
+from biosemalign.pipelines.workflow import Cascade, workflow_from_profile
 from biosemalign.profiles.loader import load_profile
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.resources.registry import DeploymentEnvironment
+from biosemalign.routing.conformal import Calibration
 from biosemalign.routing.router import DecisionRouter
 from biosemalign.schemas.artifact import AlignmentArtifact, BatchAlignmentRecord
 from biosemalign.schemas.decision import AlignmentDecision, AlignmentProposal, ValidationResult
@@ -40,7 +40,7 @@ from biosemalign.schemas.request import AlignmentRequest
 from biosemalign.schemas.sau import SemanticAlignmentUnit
 from biosemalign.settings import Settings, get_settings
 from biosemalign.storage.cache import ResponseCache
-from biosemalign.util import stable_id
+from biosemalign.storage.crosswalk_memo import CrosswalkMemo
 from biosemalign.validation.validator import Validator
 
 __all__ = ["BatchInputError", "BioSemAlign"]
@@ -58,8 +58,19 @@ class BatchInputError:
     error_message: str
 
 
+WorkflowBuilder = Callable[[OpContext], Cascade]
+
+
 class BioSemAlign:
-    """A configured semantic-alignment pipeline."""
+    """A configured semantic-alignment pipeline.
+
+    The workflow — which operators run, in which tiers — comes from the
+    profile, or from ``workflow``: a function that builds a :class:`Cascade`
+    from this pipeline's :class:`OpContext`. A function rather than a cascade
+    so that its operators use this pipeline's providers, whose usage the
+    decision provenance reports. Whatever it builds, the kernel runs it, so
+    validation, routing, and provenance cannot be skipped.
+    """
 
     def __init__(
         self,
@@ -69,6 +80,8 @@ class BioSemAlign:
         cache: ResponseCache | None = None,
         adjudicator: Adjudicator | None = None,
         environment: DeploymentEnvironment | str | None = None,
+        workflow: WorkflowBuilder | None = None,
+        calibration: Calibration | None = None,
     ) -> None:
         self.profile = profile
         self.settings = settings or get_settings()
@@ -81,9 +94,35 @@ class BioSemAlign:
             else None
         )
         self.sau_builder = SAUBuilder(profile, identifier_key=identifier_key)
-        self.adjudicator = adjudicator or build_adjudicator(profile)
+        self.adjudicator = adjudicator or build_adjudicator(
+            profile, settings=self.settings, cache=self.knowledge.cache
+        )
         self.validator = Validator(profile, provider=self.knowledge.primary_provider())
-        self.decision_router = DecisionRouter(profile)
+        if calibration is None and profile.routing.calibration is not None:
+            calibration = Calibration.load(profile.routing.calibration)
+        self.decision_router = DecisionRouter(profile, calibration=calibration)
+
+        context = OpContext(
+            profile=profile,
+            settings=self.settings,
+            knowledge=self.knowledge,
+            adjudicator=self.adjudicator,
+        )
+        if isinstance(workflow, Cascade):
+            raise ConfigurationError(
+                "pass a function that builds the cascade from an OpContext, not a built "
+                "Cascade: its operators must use this pipeline's knowledge router"
+            )
+        self.workflow = (workflow or workflow_from_profile)(context)
+        self.workflow.verify(profile, self.settings)
+        self._owns_memo = False
+        self.kernel = AlignmentKernel(
+            profile=profile,
+            workflow=self.workflow,
+            knowledge=self.knowledge,
+            validator=self.validator,
+            router=self.decision_router,
+        )
 
     # -- construction ------------------------------------------------------
 
@@ -126,7 +165,44 @@ class BioSemAlign:
         self.close()
 
     def close(self) -> None:
+        if self.kernel.memo is not None and self._owns_memo:
+            self.kernel.memo.close()
+            self.kernel.memo = None
         self.knowledge.close()
+
+    def attach_memo(self, memo: CrosswalkMemo | str | Path) -> CrosswalkMemo:
+        """Reuse resolutions of identical inputs across runs through a persistent memo.
+
+        Reuse is keyed on the pinned identity of every resource, so a resource
+        whose release is not pinned would let one release's mapping be served
+        for another; that is refused.
+        """
+        uses_rxnav = any(op.op_id == "rxnav" for t in self.workflow.tiers for op in t.retrievers)
+        if uses_rxnav and self.settings.rxnav_terminology_release is None:
+            raise ConfigurationError(
+                "the crosswalk memo needs a pinned RxNorm release "
+                "(BIOSEMALIGN_RXNAV_TERMINOLOGY_RELEASE); otherwise a mapping made under one "
+                "release could be reused under another"
+            )
+        self._owns_memo = not isinstance(memo, CrosswalkMemo)
+        store = (
+            memo
+            if isinstance(memo, CrosswalkMemo)
+            else CrosswalkMemo(
+                memo,
+                dir_mode=self.settings.output_dir_mode,
+                file_mode=self.settings.output_file_mode,
+            )
+        )
+        lexicon = self.knowledge.lexicon
+        self.kernel.memo = store
+        self.kernel.memo_resources = {
+            "lexicon": lexicon.bundle_sha256 if lexicon is not None else None,
+            "rxnorm_release": self.settings.rxnav_terminology_release if uses_rxnav else None,
+            "llm_model": self.settings.llm_model,
+            "llm_model_revision": self.settings.llm_model_revision,
+        }
+        return store
 
     # -- stages (§15, "advanced users should be able to run individual stages") --
 
@@ -150,21 +226,9 @@ class BioSemAlign:
         self._validate_request_profile(request)
         return self.sau_builder.build(request, run or self.new_run())
 
-    def retrieve_knowledge(self, sau: SemanticAlignmentUnit) -> KnowledgePackage:
-        """Module 2: retrieve candidates and build the Knowledge Package."""
-        provider = self.knowledge.primary_provider()
-        retriever = CandidateRetriever(provider, self.profile)
-
-        raw = retriever.retrieve(sau)
-        fused = fuse_candidates(raw, maximum=self.profile.retrieval.maximum_candidates)
-        enriched = enrich_candidates(fused, provider=provider, profile=self.profile)
-
-        return build_knowledge_package(
-            sau_id=sau.sau_id,
-            candidates=enriched,
-            profile=self.profile,
-            resource_provenance=self.knowledge.resource_provenance(),
-        )
+    def retrieve_knowledge(self, sau: SemanticAlignmentUnit, *, tier: int = 0) -> KnowledgePackage:
+        """Module 2: retrieve candidates and build one tier's Knowledge Package."""
+        return self.kernel.tier_knowledge(self.workflow.tiers[tier], sau)[1]
 
     def adjudicate(
         self, sau: SemanticAlignmentUnit, package: KnowledgePackage
@@ -270,7 +334,7 @@ class BioSemAlign:
     ) -> Iterator[BatchAlignmentRecord]:
         """Align rows independently, emitting success, error, and skipped outcomes."""
         run = run or self.new_run()
-        knowledge_by_mapping_key: OrderedDict[str, KnowledgePackage] = OrderedDict()
+        packages = PackageCache(_BATCH_MAPPING_CACHE_MAX)
         for row_number, row in enumerate(rows, start=start_row):
             source_value: str | None = None
             record_id: str | None = None
@@ -324,18 +388,7 @@ class BioSemAlign:
                 if not units:
                     raise UnsupportedInput("row produced no semantic alignment units")
                 for sau in units:
-                    cached_package = knowledge_by_mapping_key.get(sau.mapping_key)
-                    if cached_package is None:
-                        package = self.retrieve_knowledge(sau)
-                        knowledge_by_mapping_key[sau.mapping_key] = package.model_copy(deep=True)
-                        if len(knowledge_by_mapping_key) > _BATCH_MAPPING_CACHE_MAX:
-                            knowledge_by_mapping_key.popitem(last=False)
-                    else:
-                        knowledge_by_mapping_key.move_to_end(sau.mapping_key)
-                        package = cached_package.model_copy(
-                            deep=True, update={"sau_id": sau.sau_id}
-                        )
-                    artifact = self._align_with_package(sau, package, run)
+                    artifact = self.kernel.align(sau, run, cache=packages)
                     yield BatchAlignmentRecord(
                         row_number=row_number,
                         status="success",
@@ -380,8 +433,7 @@ class BioSemAlign:
         return self._align_one_artifact(sau, run).decision
 
     def _align_one_artifact(self, sau: SemanticAlignmentUnit, run: RunContext) -> AlignmentArtifact:
-        package = self.retrieve_knowledge(sau)
-        return self._align_with_package(sau, package, run)
+        return self.kernel.align(sau, run)
 
     def _align_with_package(
         self,
@@ -389,45 +441,24 @@ class BioSemAlign:
         package: KnowledgePackage,
         run: RunContext,
     ) -> AlignmentArtifact:
-        """Run deterministic stages with a retrieved or mapping-key-reused package."""
+        """Adjudicate a caller-supplied package, then finalize it through the kernel."""
         if package.sau_id != sau.sau_id:
             raise ValueError("knowledge package identity does not match the SAU")
         # Adjudicators are not input or evidence authorities. Give them
         # isolated copies and retain separate canonical snapshots for
         # validation, routing, and the persisted artifact.
         canonical_sau = sau.model_copy(deep=True)
-        adjudication_sau = canonical_sau.model_copy(deep=True)
         canonical_package = package.model_copy(deep=True)
-        adjudication_view = canonical_package.model_copy(deep=True)
-        proposal = self.adjudicate(adjudication_sau, adjudication_view)
-        validation = self.validate(proposal, canonical_package, canonical_sau)
-        decision = self.route(
+        proposal = self.adjudicate(
+            canonical_sau.model_copy(deep=True), canonical_package.model_copy(deep=True)
+        )
+        return self.kernel.finalize(
             sau=canonical_sau,
             package=canonical_package,
             proposal=proposal,
-            validation=validation,
             run=run,
-        )
-        return AlignmentArtifact(
-            artifact_id=stable_id(
-                "ART",
-                {
-                    "run_id": run.run_id,
-                    "sau": canonical_sau.model_dump(mode="json"),
-                    "knowledge_package": canonical_package.model_dump(mode="json"),
-                    "proposal": proposal.model_dump(mode="json"),
-                    "validation": validation.model_dump(mode="json"),
-                    "decision": decision.model_dump(mode="json"),
-                },
-                length=32,
-            ),
-            run_id=run.run_id,
-            mapping_key=sau.mapping_key,
-            sau=canonical_sau,
-            knowledge_package=canonical_package,
-            proposal=proposal,
-            validation=validation,
-            decision=decision,
+            model=self.adjudicator.provenance(),
+            resolution=None,
         )
 
     def _validate_request_profile(self, request: AlignmentRequest) -> None:
@@ -491,14 +522,5 @@ class BioSemAlign:
         return "|".join(escaped)
 
     def _provenance(self, run: RunContext) -> Provenance:
-        """Fill in the run's component versions and freeze it (§17.3)."""
-        run.retriever_version = CandidateRetriever.version
-        run.validation_rules_version = self.validator.version
-        run.routing_policy_version = self.decision_router.version
-        run.model = self.adjudicator.provenance()
-
-        provenance = run.freeze()
-        # The router owns the providers, so it is the only thing that knows
-        # which resources were actually touched and at which release.
-        provenance.resources = self.knowledge.resource_provenance()
-        return provenance
+        """Provenance for a decision routed through the stage-by-stage API."""
+        return self.kernel.provenance(run, model=self.adjudicator.provenance(), resolution=None)

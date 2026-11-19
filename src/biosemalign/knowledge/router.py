@@ -13,6 +13,7 @@ from types import TracebackType
 
 from biosemalign.enums import ResourceMode
 from biosemalign.exceptions import ConfigurationError, ResourceNotPermitted
+from biosemalign.knowledge.providers.lexicon import LexiconProvider, LexiconStore
 from biosemalign.knowledge.providers.rxnorm import RxNavProvider
 from biosemalign.logging import get_logger
 from biosemalign.profiles.schema import TaskProfile
@@ -27,7 +28,12 @@ log = get_logger(__name__)
 
 #: Provider implementations available in this release. Resources declared in
 #: the registry but absent here are rejected with a clear message.
-_PROVIDER_FACTORIES = {"rxnav"}
+_PROVIDER_FACTORIES = {"rxnav", "lexicon"}
+
+#: Registry entry governing every vocabulary served from a local bundle.
+LOCAL_LEXICON_RESOURCE = "LocalLexicon"
+
+Provider = RxNavProvider | LexiconProvider
 
 
 class KnowledgeRouter:
@@ -40,6 +46,7 @@ class KnowledgeRouter:
         settings: Settings | None = None,
         cache: ResponseCache | None = None,
         environment: DeploymentEnvironment | str | None = None,
+        lexicon: LexiconStore | None = None,
     ) -> None:
         self.profile = profile
         self.settings = settings or get_settings()
@@ -67,7 +74,19 @@ class KnowledgeRouter:
                 raise ConfigurationError(
                     f"unknown deployment environment {raw_environment!r}; resource access refused"
                 ) from exc
-        self._providers: dict[str, RxNavProvider] = {}
+        self._providers: dict[str, Provider] = {}
+        # A supplied store belongs to the caller; one opened from settings is ours.
+        self._owns_lexicon = lexicon is None and self.settings.lexicon_path is not None
+        self.lexicon = lexicon
+        if self._owns_lexicon:
+            assert self.settings.lexicon_path is not None
+            self.lexicon = LexiconStore(
+                self.settings.lexicon_path,
+                expected_sha256=self.settings.lexicon_sha256,
+                require_pin=self.cache.mode is ResourceMode.FROZEN,
+            )
+        if self.lexicon is not None and self.environment is not None:
+            get_registry().require(LOCAL_LEXICON_RESOURCE, environment=self.environment)
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -86,17 +105,44 @@ class KnowledgeRouter:
         for provider in self._providers.values():
             provider.close()
         self._providers.clear()
+        if self._owns_lexicon and self.lexicon is not None:
+            self.lexicon.close()
+            self.lexicon = None
 
     # -- resolution --------------------------------------------------------
 
-    def primary_provider(self) -> RxNavProvider:
+    def primary_provider(self) -> Provider:
         """The provider for the profile's target terminology."""
         target = self.profile.task.target_terminology
         return self.provider_for(target)
 
-    def provider_for(self, resource_name: str) -> RxNavProvider:
-        """Construct (or reuse) the provider for a named resource."""
+    def serves_locally(self, resource_name: str) -> bool:
+        """Whether a configured lexicon bundle serves this resource."""
+        return self.lexicon is not None and self.lexicon.vocabulary_id(resource_name) is not None
+
+    def provider_for(self, resource_name: str) -> Provider:
+        """Construct (or reuse) the provider for a named resource.
+
+        A vocabulary in the configured lexicon bundle is served from it, ahead
+        of any remote provider registered under the same name: a deployment
+        that installs a pinned local snapshot means to use it.
+        """
+        key = resource_name.casefold()
+        cached = self._providers.get(key)
+        if cached is not None:
+            return cached
+        if self.lexicon is not None and self.serves_locally(resource_name):
+            local = LexiconProvider(self.lexicon, resource_name, mode=self.cache.mode)
+            self._providers[key] = local
+            log.debug("router.provider_ready", resource=local.resource_name, provider="lexicon")
+            return local
+
         registry = get_registry()
+        if not any(spec.name.casefold() == key for spec in registry.resources):
+            raise ResourceNotPermitted(
+                f"resource {resource_name!r} is neither served by a configured lexicon bundle "
+                f"nor declared in the registry ({[r.name for r in registry.resources]})"
+            )
         if self.environment is None:
             # An unset environment conveys no egress authorization, but strict
             # cache replay still checks implementation and licensing gates.
@@ -122,10 +168,11 @@ class KnowledgeRouter:
                 f"resource {resource_name!r} maps to provider {spec.provider!r}, which is "
                 f"not implemented in this release. Implemented: {sorted(_PROVIDER_FACTORIES)}"
             )
-
-        cached = self._providers.get(spec.provider)
-        if cached is not None:
-            return cached
+        if spec.provider == "lexicon":
+            raise ResourceNotPermitted(
+                f"resource {resource_name!r} is served only from a local lexicon bundle, and "
+                "none that serves it is configured (BIOSEMALIGN_LEXICON_PATH)"
+            )
 
         provider = RxNavProvider(
             # Settings carry the registry's public default but allow a
@@ -139,7 +186,7 @@ class KnowledgeRouter:
             expected_release=self.settings.rxnav_terminology_release,
             permitted_egress_classes=self.settings.permitted_egress_classes,
         )
-        self._providers[spec.provider] = provider
+        self._providers[key] = provider
         log.debug(
             "router.provider_ready",
             resource=spec.name,
@@ -154,6 +201,10 @@ class KnowledgeRouter:
         """Provenance for every resource this router actually touched."""
         entries: list[ResourceProvenance] = []
         for provider in self._providers.values():
+            if isinstance(provider, LexiconProvider):
+                if provider.cache_hits:
+                    entries.append(provider.provenance())
+                continue
             metadata = provider.last_access_metadata
             if not metadata and provider.cache_hits == 0 and provider.network_calls == 0:
                 continue

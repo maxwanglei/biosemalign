@@ -35,7 +35,7 @@ from biosemalign.util import lexical_similarity, normalize_text
 
 __all__ = ["ADJUDICATOR_VERSION", "DeterministicAdjudicator"]
 
-ADJUDICATOR_VERSION = "0.1.0"
+ADJUDICATOR_VERSION = "0.2.0"
 
 #: Similarity at or above which a fuzzy hit is treated as naming the same
 #: concept. Set high: this decides whether a mapping is reported as EXACT, and
@@ -115,7 +115,11 @@ class DeterministicAdjudicator:
                 rationale="required context is missing; mapping would be a guess",
             )
 
-        if not package.candidates:
+        # Identity is the best-ranked candidate in the target terminology.
+        # Candidates from other vocabularies are concordance evidence only.
+        target = sau.task.target_terminology.casefold()
+        top = next((c for c in package.candidates if c.vocabulary.casefold() == target), None)
+        if top is None:
             return self._abstain(
                 sau,
                 RelationshipType.UNSUPPORTED_MAPPING,
@@ -125,8 +129,23 @@ class DeterministicAdjudicator:
                     f"{sau.mention.text!r} on any enabled channel"
                 ),
             )
+        return self.project(sau, top)
 
-        top = package.candidates[0]
+    def project(self, sau: SemanticAlignmentUnit, top: CandidateConcept) -> AlignmentProposal:
+        """Resolve a chosen source identity to the requested granularity.
+
+        Separate from :meth:`adjudicate` so that another proposer can choose
+        the identity — from cross-vocabulary concordance, say — and still
+        report relationship and semantic loss under exactly these rules.
+        """
+        if sau.readiness.status is ReadinessStatus.INSUFFICIENT_CONTEXT:
+            return self._abstain(
+                sau,
+                RelationshipType.INSUFFICIENT_CONTEXT,
+                DecisionType.INSUFFICIENT_CONTEXT,
+                missing=sau.readiness.missing_context,
+                rationale="required context is missing; mapping would be a guess",
+            )
 
         # A candidate that resembles nothing in the source is not a mapping.
         # RxNav's approximate matcher always returns its nearest neighbour, so
@@ -307,6 +326,9 @@ class DeterministicAdjudicator:
             sau_id=sau.sau_id,
             decision=decision,
             relationship_to_source=relationship,
+            # An abstention still carries the source's own attributes: declining
+            # to map is not a claim that the source had none.
+            preserved_attributes=_preserved_attributes(sau),
             missing_information=list(missing or []),
             rationale=rationale,
             requested_human_review=decision is not DecisionType.NO_VALID_MAPPING,
@@ -504,9 +526,7 @@ class DeterministicAdjudicator:
             source_level_concept=source_level,
             analysis_level_concept=analysis_level,
             relationship_to_source=relationship,
-            preserved_attributes=sau.attributes.model_dump(
-                exclude_none=True, exclude={"extensions"}
-            ),
+            preserved_attributes=_preserved_attributes(sau),
             semantic_loss=semantic_loss,
             unsupported_inferences=unsupported,
             missing_information=list(missing or []) + list(sau.readiness.missing_context),
@@ -517,6 +537,10 @@ class DeterministicAdjudicator:
 
 
 # -- module helpers --------------------------------------------------------
+
+
+def _preserved_attributes(sau: SemanticAlignmentUnit) -> dict[str, object]:
+    return sau.attributes.model_dump(exclude_none=True, exclude={"extensions"})
 
 
 def _to_selected(candidate: CandidateConcept) -> SelectedConcept:

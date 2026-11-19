@@ -29,6 +29,7 @@ from biosemalign.enums import (
 )
 from biosemalign.exceptions import BioSemAlignError
 from biosemalign.pipelines.base import BioSemAlign
+from biosemalign.verification import verify_artifact
 
 __all__ = [
     "BioSemAlign",
@@ -41,4 +42,5 @@ __all__ = [
     "SourceType",
     "ValidationStatus",
     "__version__",
+    "verify_artifact",
 ]

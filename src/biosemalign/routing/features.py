@@ -87,10 +87,13 @@ def extract_features(
 
     margin: float | None = None
     if source_candidate is not None:
+        # Alternatives are other target-vocabulary concepts. A concordant
+        # match in another vocabulary is the same entity, not a competitor.
         comparable = [
             candidate
             for candidate in package.candidates
-            if candidate.candidate_id != source_candidate.candidate_id
+            if candidate.vocabulary.casefold() == target_vocabulary.casefold()
+            and candidate.candidate_id != source_candidate.candidate_id
             and candidate.channels & source_candidate.channels
         ]
         if comparable:
