@@ -1,0 +1,61 @@
+profile_name: step1_mprint
+profile_version: 0.3.0
+description: >
+  Step 1 on the MPRINT dictionary. Coding keeps every exact code; linking
+  follows each code into RxNorm at ingredient level; resolution accepts a term
+  only when its codes agree on an identity that reaches RxNorm ingredients.
+  Everything else passes to Step 2 with its codes and links recorded.
+
+# What to map into, and at which level. The spec (src/biosemalign/targets/rxnorm.yaml)
+# says which classes sit at which level and what a coarser target loses.
+target:
+  spec: rxnorm
+  granularity: ingredient
+  # Non-US brands and products live in RxNorm Extension; they count when every
+  # ingredient they reach is an RxNorm ingredient.
+  source_terminologies: [RxNorm Extension]
+
+task:
+  operation: drug_normalization
+  mapping_intent: ingredient_level_analysis
+
+input:
+  optional_context: [route, drug_role, indication, dose, formulation]
+  mapping_key_context: [route, dose, unit, formulation]
+
+knowledge:
+  primary_resources: [RxNorm]
+  secondary_resources:
+    [RxNorm Extension, UNII, MeSH, NCIt, SNOMED, ATC, UMLS, DrugBank, Drugs@FDA, OrangeBook,
+     EMAArticle57]
+  allowed_relationships:
+    [has_ingredient, has_precise_ingredient, has_tradename, has_dose_form, consists_of]
+
+validation:
+  rules:
+    - drug_semantics
+
+workflow:
+  tiers:
+    - name: step1
+      # 1a. Coding: every exact code, in every vocabulary.
+      coding:
+        - op: exact
+          options:
+            vocabularies:
+              [RxNorm, RxNorm Extension, UNII, MeSH, NCIt, SNOMED, ATC, UMLS, DrugBank,
+               Drugs@FDA, OrangeBook, EMAArticle57]
+      # Linking: group codes that are the same entity, and follow them into RxNorm.
+      linking:
+        op: concordance
+        options:
+          # Only two different RxNorm-family codes in one group make the target
+          # ambiguous; a SNOMED substance and its product, or several FDA
+          # listings of one brand, are recorded together.
+          conflict_vocabularies: [RxNorm, RxNorm Extension]
+      # 1b. Resolution: MPRINT's rule.
+      resolution:
+        op: concordant
+        options:
+          authority_sources: [RxNorm, RxNorm Extension]
+          minimum_mention_length: 5

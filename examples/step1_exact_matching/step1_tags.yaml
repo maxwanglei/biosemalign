@@ -1,0 +1,11 @@
+policy_id: step1_category_tags
+policy_version: "1.0"
+non_target_category_tags:
+  - rule_id: trial_control
+    tag: CONTROL_VEHICLE
+    mention_pattern: '^\s*(placebo|saline|vehicle)\b'
+    message: the mention names a trial control, not a drug exposure
+  - rule_id: drug_class
+    tag: DRUG_CLASS
+    mention_pattern: '\b(ssris?|nsaids?|beta[- ]blockers?|tocolytics?)\b'
+    message: the mention names a drug class, not one drug

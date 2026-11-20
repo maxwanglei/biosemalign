@@ -21,8 +21,7 @@ htmlcov/
 .env.*
 !.env.example
 
-# Local provider cache. Note that tests/cassettes/ is a *committed* cache used
-# as the offline fixture store, and is deliberately not ignored here.
+# Local provider cache. Restricted test cassettes are kept out of version control.
 .biosemalign_cache/
 
 # The cache's SQLite index is derived from the payload files and rebuildable.
@@ -33,14 +32,22 @@ index.sqlite
 # Data. Licensed terminology content must not enter the distribution (§20.2).
 data/
 *.parquet
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
 *.jsonl
 !tests/**/*.jsonl
 !examples/**/*.jsonl
+
+# Restricted test fixtures, cassettes, and generated example outputs.
+tests/cassettes/
+tests/fixtures/
+examples/**/bundle/
+examples/**/out/
 
 # Editors / OS
 .DS_Store
 .idea/
 .vscode/
-examples/ 
-tests/
 docs/

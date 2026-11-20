@@ -42,8 +42,7 @@ repos:
         pass_filenames: false
         files: ^src/biosemalign/schemas/
 
-      # The test suite is not under version control, so CI cannot enforce the
-      # coverage gate; run it before every push from the checkout that has it.
+      # Run the test suite with the branch coverage gate before every push.
       - id: pytest-coverage
         name: pytest with branch coverage gate
         entry: pytest --cov=biosemalign -q

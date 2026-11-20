@@ -1,0 +1,17 @@
+vocabulary_id,concept_code,concept_name,concept_class,status
+RxNorm,RXN-001,metoprolol,IN,active
+RxNorm,RXN-002,metoprolol tartrate,PIN,active
+RxNorm,RXN-003,metoprolol succinate,PIN,active
+RxNorm,RXN-010,Toprol XL,BN,active
+RxNorm,RXN-020,metoprolol succinate 50 MG Extended Release Oral Tablet [Toprol XL],SBD,active
+RxNorm,RXN-030,methotrexate,IN,active
+RxNorm,RXN-040,caffeine,IN,active
+RxNorm,RXN-041,caffeine citrate,PIN,active
+RxNorm,RXN-050,lisinopril,IN,active
+RxNorm,RXN-051,hydrochlorothiazide,IN,active
+RxNorm,RXN-052,hydrochlorothiazide / lisinopril,MIN,active
+RxNorm,RXN-090,Extended Release Oral Tablet,DF,active
+UNII,UNII-001,METOPROLOL,substance,active
+UNII,UNII-002,METOPROLOL TARTRATE,substance,active
+UNII,UNII-030,METHOTREXATE,substance,active
+UNII,UNII-041,CAFFEINE CITRATE,substance,active

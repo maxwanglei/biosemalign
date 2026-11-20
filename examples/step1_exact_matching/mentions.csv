@@ -1,0 +1,13 @@
+report_id,drug_seq,drugname,route
+R1,1,metoprolol,ORAL
+R2,1,METOPROLOL TARTRATE,ORAL
+R3,1,Toprol XL 50 MG,ORAL
+R4,1,MTX,
+R5,1,lopressor-like name,ORAL
+R6,1,caffeine citrate,INTRAVENOUS
+R7,1,hydrochlorothiazide / lisinopril,ORAL
+R8,1,amethopterin,
+R9,1,aspirin,ORAL
+R10,1,metoprolol,ORAL
+R11,1,placebo,ORAL
+R12,1,SSRIs,ORAL

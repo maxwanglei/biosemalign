@@ -1,0 +1,11 @@
+vocabularies:
+  - vocabulary_id: RxNorm
+    release: "2026-11-03"
+    license: public
+    description: RxNorm backbone plus names from MyDrugDict
+  - vocabulary_id: UNII
+    release: "2026-10"
+    license: public
+source_aliases:
+  "MyDrugDict:DrugBank": DrugBank
+  "MyDrugDict:MeSH": MeSH

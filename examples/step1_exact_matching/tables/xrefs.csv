@@ -1,0 +1,5 @@
+vocabulary_id,concept_code,key_type,key_value
+UNII,UNII-001,RxNorm,RXN-001
+UNII,UNII-002,RxNorm,RXN-002
+UNII,UNII-030,RxNorm,RXN-030
+UNII,UNII-041,RxNorm,RXN-041

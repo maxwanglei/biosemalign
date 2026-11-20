@@ -1,0 +1,11 @@
+vocabulary_id_1,concept_code_1,predicate,vocabulary_id_2,concept_code_2
+RxNorm,RXN-002,has_ingredient,RxNorm,RXN-001
+RxNorm,RXN-003,has_ingredient,RxNorm,RXN-001
+RxNorm,RXN-010,has_ingredient,RxNorm,RXN-001
+RxNorm,RXN-020,has_ingredient,RxNorm,RXN-001
+RxNorm,RXN-020,has_precise_ingredient,RxNorm,RXN-003
+RxNorm,RXN-020,has_tradename,RxNorm,RXN-010
+RxNorm,RXN-020,has_dose_form,RxNorm,RXN-090
+RxNorm,RXN-041,has_ingredient,RxNorm,RXN-040
+RxNorm,RXN-052,has_ingredient,RxNorm,RXN-050
+RxNorm,RXN-052,has_ingredient,RxNorm,RXN-051

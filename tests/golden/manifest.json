@@ -1,0 +1,27 @@
+{
+  "baseline_id": "v0.3-p2-synthetic-v5",
+  "baseline_source": "unwrapped BioSemAlign.align_batch_records",
+  "comparison": "all rows and semantic fields exact after named volatile-field normalization",
+  "counts": {
+    "error": 6,
+    "skipped": 1,
+    "success": 13
+  },
+  "expected_records_sha256": "2bf8660bcd12607bb4d8544ddc2d170e3c5d5ab3e6298986d6d16584029aa023",
+  "fixture_provenance": "invented offline responses; no terminology or patient data",
+  "input_sha256": "39b1b2477683f06e8376da66e4dd0f10dbdd279a18c74a24a66a191cad6b8c11",
+  "normalization": [
+    "artifact.run_id",
+    "artifact.artifact_id (dependent on run and timestamps)",
+    "provenance.run_id",
+    "provenance.created_at",
+    "resource.accessed_at",
+    "temporary cache root in error messages"
+  ],
+  "profile_sha256": "acb653ec2fea85928782e8ad81fab79f926f1f81a819b2bf4ee9c2ef65a01b7e",
+  "resource_fixture_sha256": "c7f31953072dd78a1241d2699ad338438cb102a4ece2edcabb76f4604c68be42",
+  "source_release_validation": "not implemented",
+  "source_shape": "synthetic FAERS-shaped rows, not a validated FAERS release",
+  "supersedes": "v0.3-p1-synthetic-v4 (workflow provenance records the target spec, which is part of workflow_id; package gains links=null; no mapping, loss, or routing change)",
+  "terminology_release": "synthetic-rxnorm-v1"
+}

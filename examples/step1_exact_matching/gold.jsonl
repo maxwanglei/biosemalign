@@ -1,0 +1,12 @@
+{"case_id": "R1|1", "source_value": "metoprolol", "expected_concept_ids": ["RXN-001"], "category": "ingredient"}
+{"case_id": "R2|1", "source_value": "METOPROLOL TARTRATE", "expected_concept_ids": ["RXN-001"], "category": "salt"}
+{"case_id": "R3|1", "source_value": "Toprol XL 50 MG", "expected_concept_ids": ["RXN-001"], "category": "product"}
+{"case_id": "R4|1", "source_value": "MTX", "expected_concept_ids": ["RXN-030"], "category": "acronym"}
+{"case_id": "R6|1", "source_value": "caffeine citrate", "expected_concept_ids": ["RXN-040"], "category": "salt"}
+{"case_id": "R7|1", "source_value": "hydrochlorothiazide / lisinopril", "expected_concept_ids": ["RXN-050", "RXN-051"], "category": "combination"}
+{"case_id": "R9|1", "source_value": "aspirin", "expected_concept_ids": [], "category": "not_in_dictionary"}
+{"case_id": "R5|1", "source_value": "lopressor-like name", "expected_concept_ids": ["RXN-001"], "category": "ambiguous_name"}
+{"case_id": "R8|1", "source_value": "amethopterin", "expected_concept_ids": ["RXN-030"], "category": "synonym"}
+{"case_id": "R10|1", "source_value": "metoprolol", "expected_concept_ids": ["RXN-001"], "category": "ingredient"}
+{"case_id": "R11|1", "source_value": "placebo", "expected_concept_ids": [], "category": "control"}
+{"case_id": "R12|1", "source_value": "SSRIs", "expected_concept_ids": [], "category": "drug_class"}

@@ -1,0 +1,11 @@
+vocabulary_id,concept_code,synonym,source
+RxNorm,RXN-020,Toprol XL 50 MG,MyDrugDict:FAERS_curation
+RxNorm,RXN-001,metoprolol,MyDrugDict:DrugBank
+RxNorm,RXN-030,methotrexate,MyDrugDict:DrugBank
+RxNorm,RXN-030,MTX,MyDrugDict:abbreviations
+RxNorm,RXN-030,amethopterin,MyDrugDict:MeSH
+RxNorm,RXN-041,caffeine citrate,MyDrugDict:DrugBank
+RxNorm,RXN-052,lisinopril / hydrochlorothiazide,MyDrugDict:FAERS_curation
+RxNorm,RXN-052,zestoretic-like combo,MyDrugDict:FAERS_curation
+RxNorm,RXN-002,lopressor-like name,MyDrugDict:FAERS_curation
+RxNorm,RXN-003,lopressor-like name,MyDrugDict:FAERS_curation

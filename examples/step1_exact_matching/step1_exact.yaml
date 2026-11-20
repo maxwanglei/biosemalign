@@ -1,0 +1,40 @@
+profile_name: step1_exact_matching
+profile_version: 0.1.0
+description: Step 1 - multi-dictionary exact matching with concordance.
+
+task:
+  operation: drug_normalization
+  mapping_intent: ingredient_level_analysis
+  target_terminology: RxNorm
+  desired_granularity: ingredient
+
+input:
+  optional_context: [route, drug_role, indication, dose, formulation]
+  mapping_key_context: [route, dose, unit, formulation]
+
+knowledge:
+  primary_resources: [RxNorm]
+  secondary_resources: [UNII]
+  allowed_relationships:
+    [has_ingredient, has_precise_ingredient, has_tradename, has_dose_form, consists_of]
+
+validation:
+  rules:
+    - drug_semantics
+    - op: policy
+      options: {path: step1_tags.yaml}
+
+workflow:
+  tiers:
+    - name: exact
+      retrievers:
+        - op: lexicon
+          options:
+            vocabularies: [RxNorm, UNII]
+            methods: [exact]
+      fuser: cross_vocab_concordance
+      proposer:
+        op: concordant_exact
+        options:
+          authority_sources: [RxNorm]
+          minimum_mention_length: 5
