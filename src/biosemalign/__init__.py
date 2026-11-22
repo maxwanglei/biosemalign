@@ -18,6 +18,7 @@ Typical use::
 from __future__ import annotations
 
 from biosemalign._version import __version__
+from biosemalign.api import BioSemAlign
 from biosemalign.enums import (
     DecisionType,
     EgressDataClass,
@@ -28,7 +29,6 @@ from biosemalign.enums import (
     ValidationStatus,
 )
 from biosemalign.exceptions import BioSemAlignError
-from biosemalign.pipelines.base import BioSemAlign
 from biosemalign.verification import verify_artifact
 
 __all__ = [

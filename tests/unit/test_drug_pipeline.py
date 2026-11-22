@@ -23,10 +23,6 @@ from tests.support import (
 )
 
 from biosemalign import BioSemAlign
-from biosemalign.adjudication.adjudicator import build_adjudicator
-from biosemalign.adjudication.backend import GenerationConfig
-from biosemalign.adjudication.deterministic import DeterministicAdjudicator
-from biosemalign.adjudication.mock_backend import MockAdjudicator, MockLLMBackend
 from biosemalign.enums import (
     DecisionType,
     RelationshipType,
@@ -40,6 +36,10 @@ from biosemalign.exceptions import (
     ProviderError,
     UnsupportedInput,
 )
+from biosemalign.modules import OpContext, build
+from biosemalign.modules.resolve.backend import GenerationConfig
+from biosemalign.modules.resolve.deterministic import DeterministicResolver
+from biosemalign.modules.resolve.mock_backend import MockLLMBackend, MockResolver
 from biosemalign.profiles.loader import load_profile
 from biosemalign.schemas.artifact import AlignmentArtifact
 from biosemalign.schemas.decision import AlignmentProposal
@@ -183,7 +183,7 @@ def test_existing_supported_projection_branches(
     tmp_path: Path, granularity: str, value: str, expected: str
 ) -> None:
     profile = load_profile("faers_drug_normalization")
-    profile.task.desired_granularity = granularity
+    profile.target.level = granularity
     with make_pipeline(tmp_path, profile=profile) as pipeline:
         decision = pipeline.align_value(value)
     assert decision.selected_concepts[0].concept_id == expected
@@ -195,7 +195,7 @@ def test_unresolved_granularity_can_be_explicitly_represented_by_existing_profil
     tmp_path: Path,
 ) -> None:
     profile = load_profile("faers_drug_normalization")
-    profile.adjudication.relation_types.append(RelationshipType.RELATED_NOT_EQUIVALENT)
+    profile.task.relation_types.append(RelationshipType.RELATED_NOT_EQUIVALENT)
     with make_pipeline(tmp_path, profile=profile) as pipeline:
         result = pipeline.align_value(UNSUPPORTED)
         historic = pipeline.align_value(HISTORICAL)
@@ -207,7 +207,7 @@ def test_unresolved_granularity_can_be_explicitly_represented_by_existing_profil
 
 def test_unsupported_granularity_abstains_instead_of_defaulting(tmp_path: Path) -> None:
     profile = load_profile("faers_drug_normalization")
-    profile.task.desired_granularity = "clinical_drug"
+    profile.target.level = "clinical_drug"
     with make_pipeline(tmp_path, profile=profile) as pipeline:
         result = pipeline.align_artifact(pipeline.make_request(ALPHA))
     assert result.decision.decision is DecisionType.ABSTAINED
@@ -218,7 +218,10 @@ def test_unsupported_granularity_abstains_instead_of_defaulting(tmp_path: Path) 
 
 def test_required_context_requests_review_without_manufacturing_attributes(tmp_path: Path) -> None:
     profile = load_profile("faers_drug_normalization")
-    profile.input.required_context = ["route"]
+    profile.context.fields = [
+        f.model_copy(update={"required": True}) if f.name == "route" else f
+        for f in profile.context.fields
+    ]
     with make_pipeline(tmp_path, profile=profile) as pipeline:
         result = pipeline.align_value(ALPHA)
     assert result.decision is DecisionType.INSUFFICIENT_CONTEXT
@@ -308,41 +311,46 @@ def test_provider_failure_is_not_a_negative_mapping(
     assert record.artifact is None
 
 
-def test_adjudicator_cannot_mutate_canonical_source_or_candidates(
+def test_resolver_cannot_mutate_canonical_source_or_candidates(
     tmp_path: Path,
 ) -> None:
-    class MutatingAdjudicator(DeterministicAdjudicator):
-        def adjudicate(self, sau: Any, package: Any) -> AlignmentProposal:
-            proposal = super().adjudicate(sau, package)
+    class MutatingResolver(DeterministicResolver):
+        def resolve(self, sau: Any, package: Any) -> AlignmentProposal:
+            proposal = super().resolve(sau, package)
             sau.source.raw_value = "mutated"
             package.candidates.clear()
             return proposal
 
     profile = load_profile("faers_drug_normalization")
-    with make_pipeline(tmp_path, adjudicator=MutatingAdjudicator(profile)) as pipeline:
+    with make_pipeline(tmp_path, resolver=MutatingResolver(profile)) as pipeline:
         result = pipeline.align_artifact(pipeline.make_request(ALPHA))
     assert result.sau.source.raw_value == ALPHA
     assert result.knowledge_package.candidates
     assert result.decision.routing_status is RoutingStatus.AUTO_ACCEPT
 
 
-def test_bad_knowledge_identity_fails_before_adjudication(
+def test_bad_knowledge_identity_fails_before_resolution(
     synthetic_pipeline: BioSemAlign,
 ) -> None:
     run = synthetic_pipeline.new_run(run_id="fixed")
     sau = synthetic_pipeline.build_sau(synthetic_pipeline.make_request(ALPHA), run)[0]
-    package = synthetic_pipeline.retrieve_knowledge(sau)
+    package = synthetic_pipeline.build_package(sau)
     package.sau_id = "different"
     with pytest.raises(ValueError, match="identity does not match"):
         synthetic_pipeline._align_with_package(sau, package, run)
 
 
-@pytest.mark.parametrize("backend", ["vllm", "unknown"])
-def test_unimplemented_backends_fail_explicitly(backend: str) -> None:
-    profile = load_profile("faers_drug_normalization")
-    profile.adjudication.backend = backend
+@pytest.mark.parametrize("name", ["llm", "unknown"])
+def test_unconfigured_or_unknown_resolvers_fail_explicitly(
+    synthetic_pipeline: BioSemAlign, name: str
+) -> None:
+    context = OpContext(
+        profile=synthetic_pipeline.profile,
+        settings=synthetic_pipeline.settings,
+        knowledge=synthetic_pipeline.knowledge,
+    )
     with pytest.raises(ConfigurationError):
-        build_adjudicator(profile)
+        build("resolve", name, context)
 
 
 def test_mock_backend_preserves_schema_and_exhaustion_contract(artifact: AlignmentArtifact) -> None:
@@ -359,24 +367,24 @@ def test_mock_backend_preserves_schema_and_exhaustion_contract(artifact: Alignme
     wrong = MockLLMBackend([KnowledgePackage(sau_id="test")])
     with pytest.raises(AdjudicationFailure, match="expected AlignmentProposal"):
         wrong.generate_structured(**options)
-    mock = MockAdjudicator()
+    mock = MockResolver()
     assert mock.provenance().backend == "mock"
     assert (
-        mock.adjudicate(artifact.sau, artifact.knowledge_package).selected_concepts[0].concept_id
+        mock.resolve(artifact.sau, artifact.knowledge_package).selected_concepts[0].concept_id
         == "2001"
     )
     assert (
-        mock.adjudicate(artifact.sau, KnowledgePackage(sau_id=artifact.sau.sau_id)).decision
+        mock.resolve(artifact.sau, KnowledgePackage(sau_id=artifact.sau.sau_id)).decision
         is DecisionType.NO_VALID_MAPPING
     )
 
 
 def test_disallowed_required_relationship_fails_closed(artifact: AlignmentArtifact) -> None:
     profile = load_profile("faers_drug_normalization")
-    profile.adjudication.relation_types = [RelationshipType.EXACT]
-    adjudicator = DeterministicAdjudicator(profile)
+    profile.task.relation_types = [RelationshipType.EXACT]
+    resolver = DeterministicResolver(profile)
     with pytest.raises(AdjudicationFailure, match="cannot represent abstention"):
-        adjudicator.adjudicate(artifact.sau, artifact.knowledge_package)
+        resolver.resolve(artifact.sau, artifact.knowledge_package)
 
 
 def test_collection_vs_single_outputs_are_consistent(synthetic_pipeline: BioSemAlign) -> None:

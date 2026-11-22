@@ -8,9 +8,10 @@ never assigns a terminology concept (§5.1).
 from __future__ import annotations
 
 from biosemalign._version import __version__
+from biosemalign.enums import MentionFidelity, SemanticType, SourceType
 from biosemalign.input.adapters.base import ADAPTER_VERSION, get_adapter
 from biosemalign.input.adapters.structured import register_default_adapters
-from biosemalign.input.context import build_attributes, build_envelope
+from biosemalign.input.context import build_attributes, build_envelope, context_view_from_parts
 from biosemalign.input.readiness import assess_readiness
 from biosemalign.logging import get_logger
 from biosemalign.profiles.schema import TaskProfile
@@ -25,6 +26,10 @@ __all__ = ["SAUBuilder"]
 log = get_logger(__name__)
 
 register_default_adapters()
+
+_STRUCTURAL_SOURCE_TYPES = frozenset(
+    {SourceType.STRUCTURED_FIELD, SourceType.STRUCTURED_RECORD, SourceType.STRUCTURED_BATCH}
+)
 
 
 class SAUBuilder:
@@ -56,18 +61,51 @@ class SAUBuilder:
     def _build_one(
         self, record: SourceRecord, request: AlignmentRequest, run: RunContext
     ) -> SemanticAlignmentUnit:
-        envelope = build_envelope(record)
-        attributes = build_attributes(record)
+        envelope = build_envelope(record, self.profile)
+        attributes = build_attributes(record, self.profile)
+
+        raw_types = record.extensions.get("_mention_semantic_types")
+        semantic_types = (
+            [SemanticType(item) for item in raw_types]
+            if isinstance(raw_types, list) and raw_types
+            else [self.profile.input.default_semantic_type]
+        )
+        raw_detection = record.extensions.get("_mention_detection_method")
+        detection_method = (
+            str(raw_detection)
+            if isinstance(raw_detection, str) and raw_detection
+            else (
+                "user_specified"
+                if not self.profile.input.automatic_mention_detection
+                else "profile_default"
+            )
+        )
+        raw_extractor = record.extensions.get("_mention_extractor")
+        extractor = (
+            str(raw_extractor)
+            if isinstance(raw_extractor, str) and raw_extractor
+            else ("source_field" if record.source_type in _STRUCTURAL_SOURCE_TYPES else None)
+        )
+        raw_fidelity = record.extensions.get("_mention_fidelity")
+        fidelity = (
+            MentionFidelity(raw_fidelity)
+            if raw_fidelity is not None
+            else (
+                MentionFidelity.VERBATIM if record.source_type in _STRUCTURAL_SOURCE_TYPES else None
+            )
+        )
+        raw_start = record.extensions.get("_mention_start")
+        raw_end = record.extensions.get("_mention_end")
 
         mention = Mention(
             text=record.raw_value,
             normalized_text=normalize_text(record.raw_value),
-            semantic_types=[self.profile.input.default_semantic_type],
-            detection_method=(
-                "user_specified"
-                if not self.profile.input.automatic_mention_detection
-                else "profile_default"
-            ),
+            start=raw_start if isinstance(raw_start, int) else None,
+            end=raw_end if isinstance(raw_end, int) else None,
+            semantic_types=semantic_types,
+            detection_method=detection_method,
+            extractor=extractor,
+            fidelity=fidelity,
         )
 
         readiness = assess_readiness(
@@ -80,16 +118,10 @@ class SAUBuilder:
         task_identity = {
             "operation": self.profile.task.operation,
             "mapping_intent": self.profile.task.mapping_intent,
-            "target_terminology": self.profile.task.target_terminology,
-            "desired_granularity": self.profile.task.desired_granularity,
+            "target_terminology": self.profile.target.terminology,
+            "desired_granularity": self.profile.target.level,
         }
-        contextual_key: dict[str, object] = {}
-        for field in self.profile.input.mapping_key_context:
-            value = getattr(attributes, field, None)
-            if value is None:
-                value = getattr(envelope, field, None)
-            if value is not None:
-                contextual_key[field] = value
+        contextual_key = context_view_from_parts(envelope, attributes, "key", self.profile)
 
         mapping_key = stable_id(
             "MAP",
@@ -137,7 +169,7 @@ class SAUBuilder:
             task=request.to_task().model_copy(
                 # Which vocabularies may supply the source identity is the
                 # profile's policy, never the caller's.
-                update={"source_terminologies": list(self.profile.task.source_terminologies)}
+                update={"source_terminologies": list(self.profile.target.source_terminologies)}
             ),
             provenance=self._stub_provenance(run),
             readiness=readiness,

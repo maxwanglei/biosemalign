@@ -16,6 +16,8 @@ Three layers, so that strictness and payload noise are both controlled:
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Never
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,10 +28,12 @@ __all__ = [
     "ExtensibleModel",
     "FrozenDict",
     "VersionedModel",
+    "canonical_digest",
+    "canonical_id",
     "deep_freeze",
 ]
 
-SCHEMA_VERSION = "0.3.0"
+SCHEMA_VERSION = "0.4.0"
 """Version of the core data contracts.
 
 Bump the minor component when a field is added, the major component when a
@@ -54,6 +58,19 @@ class FrozenDict(dict[str, Any]):
     setdefault = _immutable
     update = _immutable
     __ior__ = _immutable
+
+
+def canonical_digest(payload: Any, *, length: int = 64) -> str:
+    """Deterministic lowercase SHA-256 hex digest derived from canonical JSON."""
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
+        "utf-8"
+    )
+    return hashlib.sha256(encoded).hexdigest()[:length]
+
+
+def canonical_id(prefix: str, payload: Any, *, length: int = 32) -> str:
+    """Deterministic SHA-256 prefixed identifier derived from canonical JSON."""
+    return f"{prefix}-{canonical_digest(payload, length=length).upper()}"
 
 
 def deep_freeze(value: Any) -> Any:

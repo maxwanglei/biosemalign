@@ -41,16 +41,15 @@ from biosemalign.storage.jsonl import write_models
 
 def two_tier_profile(**routing: Any) -> TaskProfile:
     payload = load_profile("faers_drug_normalization").model_dump(mode="json")
-    payload["workflow"] = {
-        "tiers": [
-            {
-                "name": "exact",
-                "retrievers": [{"op": "rxnav", "options": {"channels": ["normalized_lookup"]}}],
-                "proposer": {"op": "adjudicator", "options": {"pass_on": ["NO_VALID_MAPPING"]}},
-            },
-            {"name": "full"},
-        ]
-    }
+    payload["tiers"] = [
+        {
+            "name": "exact",
+            "match": [{"op": "drug.rxnav", "options": {"channels": ["normalized_lookup"]}}],
+            "resolve": "rules",
+            "pass_on": ["NO_VALID_MAPPING"],
+        },
+        {"name": "full", "match": ["drug.rxnav"]},
+    ]
     payload["routing"].update(routing)
     return TaskProfile.model_validate(payload)
 
@@ -105,7 +104,7 @@ def test_evaluation_attributes_results_to_tiers(tmp_path: Path) -> None:
 def test_decisions_without_a_trace_are_unattributed(synthetic_pipeline: BioSemAlign) -> None:
     run = synthetic_pipeline.new_run()
     sau = synthetic_pipeline.build_sau(synthetic_pipeline.make_request(ALPHA), run)[0]
-    package = synthetic_pipeline.retrieve_knowledge(sau)
+    package = synthetic_pipeline.build_package(sau)
     artifact = synthetic_pipeline._align_with_package(sau, package, run)
     assert resolving_tier(artifact.decision) == "unattributed"
     report = evaluate_predictions(

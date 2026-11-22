@@ -23,10 +23,6 @@ from tests.support import (
 from typer.testing import CliRunner
 
 from biosemalign import BioSemAlign
-from biosemalign.adjudication.adjudicator import build_adjudicator
-from biosemalign.adjudication.backend import GenerationConfig
-from biosemalign.adjudication.leashed import LeashedLLMAdjudicator, _choice_model
-from biosemalign.adjudication.llm_backend import OpenAICompatibleBackend
 from biosemalign.cli import app
 from biosemalign.enums import DecisionType, EgressDataClass, ResourceMode, RoutingStatus
 from biosemalign.exceptions import (
@@ -36,13 +32,16 @@ from biosemalign.exceptions import (
     LexiconError,
     ResourceNotPermitted,
 )
-from biosemalign.knowledge.candidate_fusion import fuse_ranked
 from biosemalign.knowledge.lexicon.embeddings import (
     EmbeddingIndex,
     HashingEncoder,
     build_embedding_index,
 )
 from biosemalign.knowledge.providers.lexicon import LexiconStore
+from biosemalign.modules.link.fusion import fuse_ranked
+from biosemalign.modules.resolve.backend import GenerationConfig
+from biosemalign.modules.resolve.leashed import LeashedLLMResolver, _choice_model
+from biosemalign.modules.resolve.llm_backend import OpenAICompatibleBackend
 from biosemalign.profiles.loader import load_profile
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.schemas.knowledge import CandidateConcept
@@ -106,10 +105,10 @@ class FakeBackend:
 
 def _leashed(reply: dict[str, Any] | Exception, profile: TaskProfile | None = None) -> Any:
     backend = FakeBackend(reply)
-    adjudicator = LeashedLLMAdjudicator(
+    resolver = LeashedLLMResolver(
         profile or load_profile("faers_drug_normalization"), backend, model_name="fake-model"
     )
-    return adjudicator, backend
+    return resolver, backend
 
 
 # -- backend -----------------------------------------------------------------
@@ -252,13 +251,15 @@ def test_reply_schema_admits_only_listed_candidates() -> None:
 
 
 def test_agreeing_model_reproduces_the_rule_projection(tmp_path: Path) -> None:
-    adjudicator, backend = _leashed(AGREEING_PRODUCT)
-    with make_pipeline(tmp_path, adjudicator=adjudicator) as pipeline:
+    resolver, backend = _leashed(AGREEING_PRODUCT)
+    with make_pipeline(tmp_path, resolver=resolver) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request(PRODUCT))
     assert artifact.decision.selected_concepts[0].concept_id == "1001"
     assert artifact.decision.routing_status is RoutingStatus.AUTO_ACCEPT
-    record = artifact.proposal.extensions["llm"]
-    assert record["agrees_with_terminology"] is True and record["choice"] == 1
+    assert "llm" not in artifact.proposal.extensions
+    assert len(artifact.decision.provenance.model_calls) == 1
+    record = artifact.decision.provenance.model_calls[0]
+    assert record.agrees_with_terminology is True and record.choice == 1
     assert artifact.proposal.rationale.startswith("model selected candidate 1 (2001)")
     assert "1. ExampleAlpha sodium 10 MG Oral Tablet" in backend.messages[1]["content"]
     provenance = artifact.decision.provenance.model
@@ -267,34 +268,65 @@ def test_agreeing_model_reproduces_the_rule_projection(tmp_path: Path) -> None:
 
 
 def test_disagreement_with_terminology_goes_to_review(tmp_path: Path) -> None:
-    adjudicator, _ = _leashed({**AGREEING_PRODUCT, "semantic_loss": ["strength"]})
-    with make_pipeline(tmp_path, adjudicator=adjudicator) as pipeline:
+    resolver, _ = _leashed({**AGREEING_PRODUCT, "semantic_loss": ["strength"]})
+    with make_pipeline(tmp_path, resolver=resolver) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request(PRODUCT))
     assert artifact.decision.routing_status is RoutingStatus.HUMAN_REVIEW
-    assert artifact.proposal.extensions["llm"]["agrees_with_terminology"] is False
+    assert artifact.decision.provenance.model_calls[0].agrees_with_terminology is False
     assert any("model declared" in item for item in artifact.decision.unsupported_inferences)
 
 
 @pytest.mark.parametrize(
-    ("reason", "decision", "routing"),
+    ("reason", "allow_auto_abstain", "decision", "routing"),
     [
-        ("no_valid_candidate", DecisionType.NO_VALID_MAPPING, RoutingStatus.ABSTAIN),
-        ("insufficient_context", DecisionType.INSUFFICIENT_CONTEXT, RoutingStatus.HUMAN_REVIEW),
+        (
+            "no_valid_candidate",
+            False,
+            DecisionType.NO_VALID_MAPPING,
+            RoutingStatus.HUMAN_REVIEW,
+        ),
+        (
+            "no_valid_candidate",
+            True,
+            DecisionType.NO_VALID_MAPPING,
+            RoutingStatus.ABSTAIN,
+        ),
+        (
+            "insufficient_context",
+            False,
+            DecisionType.INSUFFICIENT_CONTEXT,
+            RoutingStatus.HUMAN_REVIEW,
+        ),
+        (
+            "insufficient_context",
+            True,
+            DecisionType.INSUFFICIENT_CONTEXT,
+            RoutingStatus.HUMAN_REVIEW,
+        ),
     ],
 )
 def test_declining_every_candidate_abstains(
-    tmp_path: Path, reason: str, decision: DecisionType, routing: RoutingStatus
+    tmp_path: Path,
+    reason: str,
+    allow_auto_abstain: bool,
+    decision: DecisionType,
+    routing: RoutingStatus,
 ) -> None:
-    adjudicator, _ = _leashed(
+    profile = load_profile("faers_drug_normalization")
+    payload = profile.model_dump(mode="json")
+    payload["routing"]["allow_model_auto_abstain"] = allow_auto_abstain
+    configured = TaskProfile.model_validate(payload)
+    resolver, _ = _leashed(
         {
             **AGREEING_PRODUCT,
             "candidate": 0,
             "abstain_reason": reason,
             "relationship": "UNSUPPORTED_MAPPING",
             "semantic_loss": [],
-        }
+        },
+        configured,
     )
-    with make_pipeline(tmp_path, adjudicator=adjudicator) as pipeline:
+    with make_pipeline(tmp_path, profile=configured, resolver=resolver) as pipeline:
         result = pipeline.align_artifact(pipeline.make_request(PRODUCT, route="oral"))
     assert result.decision.decision is decision
     assert result.decision.routing_status is routing
@@ -302,17 +334,17 @@ def test_declining_every_candidate_abstains(
 
 
 def test_unusable_model_reply_is_an_abstention_for_review(tmp_path: Path) -> None:
-    adjudicator, _ = _leashed(AdjudicationFailure("model reply does not conform"))
-    with make_pipeline(tmp_path, adjudicator=adjudicator) as pipeline:
+    resolver, _ = _leashed(AdjudicationFailure("model reply does not conform"))
+    with make_pipeline(tmp_path, resolver=resolver) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request(PRODUCT))
     assert artifact.decision.decision is DecisionType.ABSTAINED
     assert artifact.decision.routing_status is RoutingStatus.HUMAN_REVIEW
-    assert "does not conform" in artifact.proposal.extensions["llm"]["error"]
+    assert "does not conform" in (artifact.decision.provenance.model_calls[0].error or "")
 
 
 def test_no_candidates_never_reach_the_model(tmp_path: Path) -> None:
-    adjudicator, backend = _leashed(AssertionError("model consulted"))  # type: ignore[arg-type]
-    with make_pipeline(tmp_path, adjudicator=adjudicator) as pipeline:
+    resolver, backend = _leashed(AssertionError("model consulted"))  # type: ignore[arg-type]
+    with make_pipeline(tmp_path, resolver=resolver) as pipeline:
         decision = pipeline.align_value(NO_MATCH)
     assert decision.decision is DecisionType.NO_VALID_MAPPING
     assert backend.messages == []
@@ -321,24 +353,26 @@ def test_no_candidates_never_reach_the_model(tmp_path: Path) -> None:
 def test_candidate_cap_and_blinding_reach_the_prompt(tmp_path: Path) -> None:
     profile = load_profile("faers_drug_normalization")
     payload = profile.model_dump(mode="json")
-    payload["knowledge"]["blinded_context_fields"] = ["indication"]
+    for field in payload["context"]["fields"]:
+        if field["name"] == "indication":
+            field["blinded"] = True
     profile = TaskProfile.model_validate(payload)
-    adjudicator, backend = _leashed(AGREEING_PRODUCT, profile)
-    with make_pipeline(tmp_path, profile=profile, adjudicator=adjudicator) as pipeline:
-        # Startup verification keeps retrieval within the cap; the adjudicator
+    resolver, backend = _leashed(AGREEING_PRODUCT, profile)
+    with make_pipeline(tmp_path, profile=profile, resolver=resolver) as pipeline:
+        # Startup verification keeps limits.candidates within the cap; the resolver
         # still truncates on its own, as a second line.
-        adjudicator.max_candidates = 1
+        resolver.max_candidates = 1
         pipeline.align_value(PRODUCT, indication="studied outcome", route="oral")
     prompt = backend.messages[1]["content"]
     assert "studied outcome" not in prompt and "route: oral" in prompt
     assert "\n2. " not in prompt
 
-    payload["retrieval"]["maximum_candidates"] = 20
+    payload["limits"]["candidates"] = 20
     with pytest.raises(ConfigurationError, match="accepts at most 15 candidates"):
         make_pipeline(
             tmp_path / "wide",
             profile=TaskProfile.model_validate(payload),
-            adjudicator=_leashed(AGREEING_PRODUCT)[0],
+            resolver=_leashed(AGREEING_PRODUCT)[0],
         )
 
 
@@ -346,10 +380,12 @@ def test_candidate_cap_and_blinding_reach_the_prompt(tmp_path: Path) -> None:
 def test_vllm_backend_runs_through_the_pipeline(tmp_path: Path) -> None:
     from tests.support import seed_synthetic_cache
 
+    from biosemalign.modules import OpContext, build
+
     respx.post(COMPLETIONS).mock(return_value=_reply(AGREEING_PRODUCT))
     _mock_rxnav_release()
     payload = load_profile("faers_drug_normalization").model_dump(mode="json")
-    payload["adjudication"]["backend"] = "vllm"
+    payload["tiers"][0]["resolve"] = {"op": "llm"}
     cache_dir = tmp_path / "cache"
     settings = synthetic_settings(
         cache_dir,
@@ -359,8 +395,9 @@ def test_vllm_backend_runs_through_the_pipeline(tmp_path: Path) -> None:
         llm_model="local-model",
     )
     seed_synthetic_cache(cache_dir)
+    profile = TaskProfile.model_validate(payload)
     with BioSemAlign(
-        TaskProfile.model_validate(payload),
+        profile,
         settings=settings,
         cache=ResponseCache(cache_dir, mode=ResourceMode.CACHE_PREFER),
     ) as pipeline:
@@ -369,31 +406,39 @@ def test_vllm_backend_runs_through_the_pipeline(tmp_path: Path) -> None:
     assert decision.provenance.model.backend == "openai_compatible"
 
     with pytest.raises(ConfigurationError, match="LLM_BASE_URL"):
-        build_adjudicator(
-            TaskProfile.model_validate(payload),
-            settings=synthetic_settings(cache_dir),
-            cache=ResponseCache(cache_dir, mode=ResourceMode.FROZEN),
+        build(
+            "resolve",
+            "llm",
+            OpContext(
+                profile=profile,
+                settings=synthetic_settings(cache_dir),
+                knowledge=pipeline.knowledge,
+            ),
         )
-    with pytest.raises(ConfigurationError, match="settings and response cache"):
-        build_adjudicator(TaskProfile.model_validate(payload))
+    with pytest.raises(ConfigurationError, match="settings"):
+        build("resolve", "llm", OpContext(profile=profile, knowledge=pipeline.knowledge))
 
 
 @respx.mock
-def test_llm_proposer_operator_in_a_cascade(tmp_path: Path) -> None:
+def test_llm_resolver_operator_in_a_cascade(tmp_path: Path) -> None:
     from tests.support import seed_synthetic_cache
 
     respx.post(COMPLETIONS).mock(return_value=_reply(AGREEING_PRODUCT))
     _mock_rxnav_release()
     payload = load_profile("faers_drug_normalization").model_dump(mode="json")
-    payload["workflow"] = {
-        "tiers": [
-            {
-                "name": "rules",
-                "proposer": {"op": "adjudicator", "options": {"pass_on_review_request": True}},
-            },
-            {"name": "model", "proposer": {"op": "llm", "options": {"max_candidates": 10}}},
-        ]
-    }
+    payload["tiers"] = [
+        {
+            "name": "rules",
+            "match": ["drug.rxnav"],
+            "resolve": "rules",
+            "pass_on_review_request": True,
+        },
+        {
+            "name": "model",
+            "match": ["drug.rxnav"],
+            "resolve": {"op": "llm", "options": {"max_candidates": 10}},
+        },
+    ]
     cache_dir = tmp_path / "cache"
     seed_synthetic_cache(cache_dir)
     settings = synthetic_settings(
@@ -416,7 +461,7 @@ def test_llm_proposer_operator_in_a_cascade(tmp_path: Path) -> None:
     assert [a.reason for a in trace.attempts] == ["review_requested", None]
     assert trace.resolved_by_tier == "model"
     assert escalated.provenance.model.backend == "openai_compatible"
-    assert operators[-1].op_id == "adjudicator:leashed_llm"
+    assert operators[-1].op_id == "llm"
 
 
 # -- policy packs ------------------------------------------------------------
@@ -424,7 +469,7 @@ def test_llm_proposer_operator_in_a_cascade(tmp_path: Path) -> None:
 
 def _with_policy(pack: dict[str, Any]) -> TaskProfile:
     payload = load_profile("faers_drug_normalization").model_dump(mode="json")
-    payload["validation"]["rules"] = ["drug_semantics", {"op": "policy", "options": {"pack": pack}}]
+    payload["checks"] = ["drug.semantics", {"op": "policy", "options": {"pack": pack}}]
     return TaskProfile.model_validate(payload)
 
 
@@ -527,15 +572,11 @@ def test_policy_packs_validate_on_load(tmp_path: Path) -> None:
             tmp_path / "both",
             profile=_with_policy(PACK).model_copy(
                 update={
-                    "validation": _with_policy(PACK).validation.model_copy(
-                        update={
-                            "rules": [
-                                _with_policy(PACK)
-                                .validation.rules[1]
-                                .model_copy(update={"options": {"pack": PACK, "path": str(path)}})
-                            ]
-                        }
-                    )
+                    "checks": [
+                        _with_policy(PACK)
+                        .checks[1]
+                        .model_copy(update={"options": {"pack": PACK, "path": str(path)}})
+                    ]
                 }
             ),
         )
@@ -636,21 +677,19 @@ def test_hybrid_retrieval_through_the_pipeline(bundle: tuple[Path, Any], tmp_pat
     path, manifest = bundle
     build_embedding_index(path, HashingEncoder(64), name="hash64")
     profile = lexicon_profile(
-        workflow={
-            "tiers": [
-                {
-                    "name": "hybrid",
-                    "retrievers": [
-                        {
-                            "op": "lexicon",
-                            "options": {"vocabularies": ["RxNorm"], "methods": ["trigram"]},
-                        },
-                        {"op": "dense", "options": {"index": "hash64", "dimension": 64}},
-                    ],
-                    "fuser": {"op": "reciprocal_rank_fusion", "options": {"k": 30}},
-                }
-            ]
-        }
+        tiers=[
+            {
+                "name": "hybrid",
+                "match": [
+                    {
+                        "op": "lexical",
+                        "options": {"vocabularies": ["RxNorm"], "method": "trigram"},
+                    },
+                    {"op": "dense", "options": {"index": "hash64", "dimension": 64}},
+                ],
+                "link": {"op": "standard", "options": {"merge": "rrf", "k": 30}},
+            }
+        ]
     )
     with lexicon_pipeline(tmp_path, path, manifest, profile=profile) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request("ExampelAlpha"))
@@ -660,22 +699,24 @@ def test_hybrid_retrieval_through_the_pipeline(bundle: tuple[Path, Any], tmp_pat
     assert channels == {"embedding", "lexical"}
     dense = next(op for op in operators if op.op_id == "dense")
     assert dense.options["model_id"] == "hashing-trigram-64"
-    assert next(op for op in operators if op.kind == "fuse").options == {"k": 30}
+    assert next(op for op in operators if op.kind == "link").options == {
+        "merge": "rrf",
+        "concordance": False,
+        "k": 30,
+    }
 
     model_profile = lexicon_profile(
-        workflow={
-            "tiers": [
-                {
-                    "name": "dense",
-                    "retrievers": [
-                        {
-                            "op": "dense",
-                            "options": {"index": "hash64", "encoder": "sentence_transformers"},
-                        }
-                    ],
-                }
-            ]
-        }
+        tiers=[
+            {
+                "name": "dense",
+                "match": [
+                    {
+                        "op": "dense",
+                        "options": {"index": "hash64", "encoder": "sentence_transformers"},
+                    }
+                ],
+            }
+        ]
     )
     with pytest.raises(ConfigurationError, match="EMBEDDING_MODEL_PATH"):
         lexicon_pipeline(tmp_path / "model", path, manifest, profile=model_profile)
@@ -701,3 +742,61 @@ def test_embed_command(bundle: tuple[Path, Any]) -> None:
         app, ["lexicon", "embed", str(path), "--name", "m", "--encoder", "sentence_transformers"]
     )
     assert missing.exit_code == 2
+
+
+def test_leashed_prompt_and_policy_check_use_context_view(tmp_path: Path) -> None:
+    profile = load_profile("faers_drug_normalization")
+    payload = profile.model_dump(mode="json")
+    payload["context"]["fields"] = [
+        *payload["context"]["fields"],
+        {"name": "matrix", "kind": "context", "use": ["resolve"]},
+        {"name": "cohort_note", "kind": "context", "use": ["check"]},
+        {"name": "blinded_endpoint", "kind": "context", "use": [], "blinded": True},
+    ]
+    extended = TaskProfile.model_validate(payload)
+    resolver, backend = _leashed(AGREEING_PRODUCT, extended)
+    with make_pipeline(tmp_path / "llm", profile=extended, resolver=resolver) as pipeline:
+        pipeline.align_value(
+            PRODUCT,
+            route="oral",
+            matrix="serum",
+            cohort_note="intramuscular cohort",
+            blinded_endpoint="secret",
+            undeclared_col="noise",
+        )
+    prompt = backend.messages[1]["content"]
+    assert "matrix: serum" in prompt
+    assert "route: oral" in prompt
+    assert "cohort_note" not in prompt
+    assert "secret" not in prompt
+    assert "noise" not in prompt
+
+    pack = {
+        "policy_id": "ctx_use",
+        "policy_version": "1.0",
+        "context_compatibility_rules": [
+            {
+                "rule_id": "cohort_check",
+                "context_field": "cohort_note",
+                "context_pattern": "intramuscular",
+                "incompatible_pattern": "Oral",
+                "message": "check-permitted extension context triggers rule",
+            },
+            {
+                "rule_id": "matrix_blocked",
+                "context_field": "matrix",
+                "context_pattern": "serum",
+                "incompatible_pattern": "Oral",
+                "message": "resolve-only extension must not be seen by check",
+            },
+        ],
+    }
+    pol_payload = extended.model_dump(mode="json")
+    pol_payload["checks"] = ["drug.semantics", {"op": "policy", "options": {"pack": pack}}]
+    with make_pipeline(
+        tmp_path / "pol", profile=TaskProfile.model_validate(pol_payload)
+    ) as pipeline:
+        decision = pipeline.align_value(PRODUCT, cohort_note="intramuscular cohort", matrix="serum")
+    codes = {f.code: f.message for f in decision.validation.findings}
+    assert "[cohort_check]" in codes.get("CONTEXT_INCOMPATIBLE", "")
+    assert "[matrix_blocked]" not in codes.get("CONTEXT_INCOMPATIBLE", "")

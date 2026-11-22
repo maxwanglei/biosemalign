@@ -13,8 +13,9 @@ from types import TracebackType
 
 from biosemalign.enums import ResourceMode
 from biosemalign.exceptions import ConfigurationError, ResourceNotPermitted
+from biosemalign.knowledge.providers.base import KnowledgeProvider
 from biosemalign.knowledge.providers.lexicon import LexiconProvider, LexiconStore
-from biosemalign.knowledge.providers.rxnorm import RxNavProvider
+from biosemalign.knowledge.providers.registry import ProviderContext, build_provider
 from biosemalign.logging import get_logger
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.resources.registry import DeploymentEnvironment, get_registry
@@ -26,14 +27,10 @@ __all__ = ["KnowledgeRouter"]
 
 log = get_logger(__name__)
 
-#: Provider implementations available in this release. Resources declared in
-#: the registry but absent here are rejected with a clear message.
-_PROVIDER_FACTORIES = {"rxnav", "lexicon"}
-
 #: Registry entry governing every vocabulary served from a local bundle.
 LOCAL_LEXICON_RESOURCE = "LocalLexicon"
 
-Provider = RxNavProvider | LexiconProvider
+Provider = KnowledgeProvider
 
 
 class KnowledgeRouter:
@@ -103,7 +100,9 @@ class KnowledgeRouter:
 
     def close(self) -> None:
         for provider in self._providers.values():
-            provider.close()
+            close = getattr(provider, "close", None)
+            if close is not None:
+                close()
         self._providers.clear()
         if self._owns_lexicon and self.lexicon is not None:
             self.lexicon.close()
@@ -113,7 +112,7 @@ class KnowledgeRouter:
 
     def primary_provider(self) -> Provider:
         """The provider for the profile's target terminology."""
-        target = self.profile.task.target_terminology
+        target = self.profile.target.terminology
         return self.provider_for(target)
 
     def serves_locally(self, resource_name: str) -> bool:
@@ -163,28 +162,15 @@ class KnowledgeRouter:
         else:
             spec = registry.require(resource_name, environment=self.environment)
 
-        if spec.provider not in _PROVIDER_FACTORIES:
-            raise ResourceNotPermitted(
-                f"resource {resource_name!r} maps to provider {spec.provider!r}, which is "
-                f"not implemented in this release. Implemented: {sorted(_PROVIDER_FACTORIES)}"
-            )
         if spec.provider == "lexicon":
             raise ResourceNotPermitted(
                 f"resource {resource_name!r} is served only from a local lexicon bundle, and "
                 "none that serves it is configured (BIOSEMALIGN_LEXICON_PATH)"
             )
 
-        provider = RxNavProvider(
-            # Settings carry the registry's public default but allow a
-            # deployment to select an institutional mirror explicitly.
-            base_url=self.settings.rxnav_base_url,
-            cache=self.cache,
-            timeout=self.settings.http_timeout_seconds,
-            max_attempts=self.settings.http_max_attempts,
-            requests_per_second=self.settings.rxnav_requests_per_second,
-            resource_name=spec.name,
-            expected_release=self.settings.rxnav_terminology_release,
-            permitted_egress_classes=self.settings.permitted_egress_classes,
+        provider = build_provider(
+            spec.provider,
+            ProviderContext(spec=spec, settings=self.settings, cache=self.cache),
         )
         self._providers[key] = provider
         log.debug(
@@ -194,6 +180,21 @@ class KnowledgeRouter:
             mode=self.cache.mode.value,
         )
         return provider
+
+    def memo_pins(
+        self, resources: set[str] | None = None, *, settings: Settings | None = None
+    ) -> dict[str, str | None]:
+        """Release/snapshot pins contributed by active or queried remote providers."""
+        active_settings = settings or self.settings
+        pins: dict[str, str | None] = {}
+        wanted = {r.casefold() for r in resources} if resources else set()
+        for key, provider in self._providers.items():
+            if wanted and key not in wanted:
+                continue
+            hook = getattr(provider, "memo_pins", None)
+            if hook is not None:
+                pins.update(hook(active_settings))
+        return pins
 
     # -- provenance --------------------------------------------------------
 
@@ -205,8 +206,10 @@ class KnowledgeRouter:
                 if provider.cache_hits:
                     entries.append(provider.provenance())
                 continue
-            metadata = provider.last_access_metadata
-            if not metadata and provider.cache_hits == 0 and provider.network_calls == 0:
+            metadata: dict[str, object] = getattr(provider, "last_access_metadata", {})
+            cache_hits = int(getattr(provider, "cache_hits", 0))
+            network_calls = int(getattr(provider, "network_calls", 0))
+            if not metadata and cache_hits == 0 and network_calls == 0:
                 continue
             raw_accessed_at = metadata.get("accessed_at") or metadata.get("cache_stored_at")
             accessed_at: datetime | None = None
@@ -220,16 +223,18 @@ class KnowledgeRouter:
                     )
 
             payload = {
-                "resource_name": provider.resource_name,
+                "resource_name": getattr(provider, "resource_name", provider.provider_name),
                 "provider_name": provider.provider_name,
                 "provider_version": provider.provider_version,
                 "terminology_release": (
-                    metadata.get("terminology_release") or provider.known_terminology_release
+                    metadata.get("terminology_release")
+                    or getattr(provider, "known_terminology_release", None)
                 ),
-                "api_version": metadata.get("api_version") or provider.api_version,
+                "api_version": metadata.get("api_version")
+                or getattr(provider, "api_version", None),
                 "mode": self.cache.mode,
-                "cache_hits": provider.cache_hits,
-                "network_calls": provider.network_calls,
+                "cache_hits": cache_hits,
+                "network_calls": network_calls,
             }
             if accessed_at is not None:
                 payload["accessed_at"] = accessed_at
@@ -239,7 +244,9 @@ class KnowledgeRouter:
     def reset_counters(self) -> None:
         """Reset provider accounting at a run boundary without dropping clients or caches."""
         for provider in self._providers.values():
-            provider.reset_counters()
+            reset = getattr(provider, "reset_counters", None)
+            if reset is not None:
+                reset()
 
     @property
     def mode(self) -> ResourceMode:

@@ -20,6 +20,7 @@ from biosemalign.util import utc_now
 
 __all__ = [
     "MemoProvenance",
+    "ModelCallRecord",
     "ModelProvenance",
     "OperatorProvenance",
     "Provenance",
@@ -99,15 +100,46 @@ class OperatorProvenance(BioSemAlignModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    kind: str = Field(description="Operator kind: transform, retrieve, fuse, propose, validate.")
+    kind: str = Field(
+        description="Operator kind: clean, match, expand, link, resolve, select, check."
+    )
     op_id: str = Field(min_length=1)
     version: str = Field(min_length=1)
     options: dict[str, Any] = Field(default_factory=dict)
+    uses_model: bool = Field(
+        default=False,
+        description="True when this operator calls a language model (§5.10).",
+    )
 
     @model_validator(mode="after")
     def _freeze_options(self) -> OperatorProvenance:
         object.__setattr__(self, "options", deep_freeze(self.options))
         return self
+
+
+class ModelCallRecord(BioSemAlignModel):
+    """Typed provenance record for one language-model call through ModelService (§5.10, G9)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    operator_id: str = Field(min_length=1)
+    operator_kind: str = Field(min_length=1)
+    task: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
+    model_revision: str | None = None
+    prompt_id: str = Field(min_length=1)
+    prompt_digest: str = Field(min_length=1)
+    request_digest: str = Field(min_length=1)
+    from_cache: bool = False
+    tier: str | None = None
+    candidates_shown: int | None = None
+    choice: int | None = None
+    declared_relationship: str | None = None
+    declared_semantic_loss: tuple[str, ...] = ()
+    agrees_with_terminology: bool | None = None
+    model_requested_review: bool | None = None
+    model_rationale: str | None = None
+    error: str | None = None
 
 
 class TierProvenance(BioSemAlignModel):
@@ -220,6 +252,7 @@ class Provenance(VersionedModel):
     routing_policy_version: str | None = None
     resources: list[ResourceProvenance] = Field(default_factory=list)
     model: ModelProvenance | None = None
+    model_calls: list[ModelCallRecord] = Field(default_factory=list)
     workflow: WorkflowProvenance | None = None
     resolution: ResolutionTrace | None = None
     memo: MemoProvenance | None = None

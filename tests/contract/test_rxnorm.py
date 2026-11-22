@@ -10,6 +10,7 @@ import pytest
 from tests.support import ALPHA, ENDPOINT, HISTORICAL, SYNTHETIC_RELEASE
 
 from biosemalign import BioSemAlign
+from biosemalign.domains.drug.providers.rxnav import RxNavProvider, _parse_status
 from biosemalign.enums import ConceptStatus, EgressDataClass, ResourceMode, RetrievalChannel
 from biosemalign.exceptions import (
     CacheMiss,
@@ -18,7 +19,6 @@ from biosemalign.exceptions import (
     ResourceNotPermitted,
 )
 from biosemalign.knowledge.providers.base import HttpJsonProvider, KnowledgeProvider, RateLimiter
-from biosemalign.knowledge.providers.rxnorm import RxNavProvider, _parse_status
 from biosemalign.storage.cache import ResponseCache
 
 
@@ -76,7 +76,7 @@ def test_relationship_provenance_preserves_traversal_and_direct_edges(
     assert edges[0].evidence_type == "rxnav_tty_traversal"
     boss = provider.get_relationships("2001", predicates=["has_boss"])
     assert boss[0].direct is True
-    assert boss[0].extensions["target_tty"] == "IN"
+    assert boss[0].object_class == "IN"
     assert provider.get_relationships("2001", predicates=["unsupported_predicate"]) == []
     assert provider.get_relationships("2001", predicates=[]) == []
 

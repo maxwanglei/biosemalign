@@ -20,9 +20,9 @@ from collections.abc import Iterable, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
-from biosemalign.enums import SemanticLossKind
+from biosemalign.enums import Authority, SemanticLossKind
 from biosemalign.schemas.base import BioSemAlignModel
 from biosemalign.util import stable_digest
 
@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 __all__ = [
     "GranularitySpec",
     "LossRule",
+    "RefinementRule",
     "SaltSpec",
     "TargetSpec",
 ]
@@ -44,6 +45,11 @@ class GranularitySpec(BioSemAlignModel):
     via: list[str] = Field(
         default_factory=list,
         description="Predicates walked from a source concept to concepts at this level.",
+    )
+    max_hops: int = Field(
+        default=1,
+        ge=1,
+        description="Maximum relationship hops walked to reach a terminal class.",
     )
     terminal: list[str] = Field(
         min_length=1,
@@ -100,7 +106,12 @@ class LossRule(BioSemAlignModel):
 
     kind: SemanticLossKind
     rule: Literal[
-        "pattern", "relationship_labels", "source_not_selected", "unselected_objects", "context"
+        "pattern",
+        "relationship_labels",
+        "source_not_selected",
+        "unselected_objects",
+        "context",
+        "ancestor",
     ]
     description: str = Field(min_length=1)
     classes: list[str] = Field(default_factory=list)
@@ -118,6 +129,7 @@ class LossRule(BioSemAlignModel):
             "unselected_objects": ("predicate",),
             "context": ("field",),
             "source_not_selected": (),
+            "ancestor": (),
         }[self.rule]
         missing = [name for name in needs if getattr(self, name) in (None, "")]
         if missing:
@@ -138,6 +150,17 @@ class SaltSpec(BioSemAlignModel):
     precise_predicate: str
 
 
+class RefinementRule(BioSemAlignModel):
+    """Rule describing how a coarse concept refines into specific concepts using SAU slots."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    from_classes: list[str] = Field(alias="from", min_length=1)
+    to_classes: list[str] = Field(alias="to", min_length=1)
+    inverse_of: list[str] = Field(min_length=1)
+    slots: list[str] = Field(min_length=1)
+
+
 class TargetSpec(BioSemAlignModel):
     """A target terminology's granularity model, as data."""
 
@@ -151,6 +174,10 @@ class TargetSpec(BioSemAlignModel):
     class_aliases: dict[str, str] = Field(
         default_factory=dict,
         description="Other spellings of concept classes, e.g. OMOP's 'Ingredient' for 'IN'.",
+    )
+    subsumption: list[str] = Field(
+        default_factory=list,
+        description="Predicates pointing from narrower concepts to broader concepts, e.g. ['is_a'].",
     )
     granularities: dict[str, GranularitySpec] = Field(default_factory=dict)
     release_bound_predicates: list[str] = Field(
@@ -166,6 +193,10 @@ class TargetSpec(BioSemAlignModel):
     )
     losses: list[LossRule] = Field(default_factory=list)
     salt: SaltSpec | None = None
+    refinement: list[RefinementRule] = Field(
+        default_factory=list,
+        description="Rules for refining coarse matched concepts down to specific concepts using slots.",
+    )
 
     @field_validator("family")
     @classmethod
@@ -185,7 +216,15 @@ class TargetSpec(BioSemAlignModel):
 
     @cached_property
     def digest(self) -> str:
-        return stable_digest(self.model_dump(mode="json"))
+        payload = self.model_dump(mode="json", by_alias=True)
+        if not payload.get("subsumption"):
+            payload.pop("subsumption", None)
+        if not payload.get("refinement"):
+            payload.pop("refinement", None)
+        for level in payload.get("granularities", {}).values():
+            if isinstance(level, dict) and level.get("max_hops") == 1:
+                level.pop("max_hops", None)
+        return stable_digest(payload)
 
     @property
     def label(self) -> str:
@@ -212,8 +251,38 @@ class TargetSpec(BioSemAlignModel):
             | {alias for alias, canonical in self.class_aliases.items() if canonical in wanted}
         )
 
+    def refinement_rules_for(self, concept_class: str | None) -> list[RefinementRule]:
+        """Refinement rules applicable when an anchor concept has ``concept_class``."""
+        canonical = self.canonical_class(concept_class)
+        if canonical is None:
+            return []
+        matched: list[RefinementRule] = []
+        for rule in self.refinement:
+            allowed = {self.canonical_class(item) or item for item in rule.from_classes}
+            if canonical in allowed:
+                matched.append(rule)
+        return matched
+
     def granularity(self, name: str | None) -> GranularitySpec | None:
-        return self.granularities.get(name or "")
+        if not name:
+            return None
+        exact = self.granularities.get(name)
+        if exact is not None:
+            return exact
+        folded = name.casefold()
+        for key, spec in self.granularities.items():
+            if key.casefold() == folded:
+                return spec
+        return None
+
+    def has_granularity(self, name: str | None) -> bool:
+        """Whether ``name`` is a valid requested level (``None`` means identity mapping)."""
+        return name is None or self.granularity(name) is not None
+
+    def max_hops_for(self, granularity: str | None) -> int:
+        """Maximum relationship hops required to reach ``granularity``."""
+        level = self.granularity(granularity)
+        return level.max_hops if level is not None else 1
 
     def predicate(self, granularity: str | None) -> str | None:
         """The predicate walked to reach a granularity (its first ``via``)."""
@@ -304,26 +373,29 @@ class TargetSpec(BioSemAlignModel):
                 return None
             return found.group(0).strip()
         if rule.rule == "relationship_labels":
-            labels = [
-                s.object_label
+            non_llm = [
+                s
                 for s in source.relationships
-                if s.predicate == rule.predicate and s.object_label
+                if s.authority is not Authority.LLM_INTERNAL_KNOWLEDGE
+            ]
+            labels = [
+                s.object_label for s in non_llm if s.predicate == rule.predicate and s.object_label
             ]
             if rule.fallback_to_source:
                 labels = [
-                    s.object_label or s.object_id
-                    for s in source.relationships
-                    if s.predicate == rule.predicate
+                    s.object_label or s.object_id for s in non_llm if s.predicate == rule.predicate
                 ]
                 return ", ".join(labels) or source.preferred_label
             return ", ".join(labels) if labels else None
-        if rule.rule == "source_not_selected":
+        if rule.rule in {"source_not_selected", "ancestor"}:
             return None if source.candidate_id in selected else source.preferred_label
         if rule.rule == "unselected_objects":
             objects = [
                 s.object_label or s.object_id
                 for s in source.relationships
-                if s.predicate == rule.predicate and s.object_id not in selected
+                if s.authority is not Authority.LLM_INTERNAL_KNOWLEDGE
+                and s.predicate == rule.predicate
+                and s.object_id not in selected
             ]
             return ", ".join(objects) if objects else None
         value = context.get(rule.field or "")

@@ -17,7 +17,7 @@ from biosemalign.schemas.provenance import ModelProvenance, ResourceProvenance
 from biosemalign.util import stable_digest, utc_now
 
 if TYPE_CHECKING:
-    from biosemalign.pipelines.base import BioSemAlign
+    from biosemalign.api import BioSemAlign
     from biosemalign.settings import Settings
 
 __all__ = [
@@ -211,7 +211,27 @@ def build_run_manifest(
     resource_snapshot = pipeline.knowledge.resource_provenance() if resources is None else resources
     output_hashes = {str(Path(path)): file_sha256(path) for path in output_paths}
 
-    model: ModelProvenance | None = pipeline.adjudicator.provenance()
+    resolver = getattr(pipeline, "resolver", None)
+    services = getattr(pipeline, "model_services", ())
+    model_calls = sum(svc.calls for svc in services)
+    model_cache_hits = sum(svc.cache_hits for svc in services)
+    kernel = getattr(pipeline, "kernel", None)
+    coding_runner = getattr(pipeline, "coding_runner", None)
+    phenotyping_runner = getattr(pipeline, "phenotyping_runner", None)
+    model: ModelProvenance | None = (
+        resolver.provenance()
+        if resolver is not None
+        else (phenotyping_runner.selector.provenance() if phenotyping_runner is not None else None)
+    )
+    workflow_prov = (
+        kernel.workflow_provenance
+        if kernel is not None
+        else (
+            phenotyping_runner.workflow_provenance
+            if phenotyping_runner is not None
+            else (coding_runner.workflow_provenance if coding_runner is not None else None)
+        )
+    )
     return ResearchRunManifest(
         run_id=run_id,
         started_at=started_at,
@@ -231,13 +251,15 @@ def build_run_manifest(
         resource_endpoints={"RxNorm": pipeline.settings.rxnav_base_url},
         resources=resource_snapshot,
         cache_snapshot_sha256=cache_snapshot_sha256(pipeline.settings.cache_dir),
-        adjudicator_version=getattr(pipeline.adjudicator, "version", None),
+        adjudicator_version=getattr(resolver, "version", None),
         validation_rules_version=pipeline.validator.version,
         routing_policy_version=pipeline.decision_router.version,
         model=model,
-        workflow=pipeline.kernel.workflow_provenance,
-        tier_timings=pipeline.kernel.tier_timings(),
-        memo_hits=pipeline.kernel.memo_hits if pipeline.kernel.memo is not None else None,
+        workflow=workflow_prov,
+        tier_timings=kernel.tier_timings() if kernel is not None else {},
+        memo_hits=kernel.memo_hits if (kernel is not None and kernel.memo is not None) else None,
+        model_calls=model_calls,
+        model_cache_hits=model_cache_hits,
         input_sha256=input_sha256,
         output_sha256=output_hashes,
         record_counts=record_counts,

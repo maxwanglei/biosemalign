@@ -81,10 +81,30 @@ def output_paths(output):
     )
 
 
-def test_version_profiles_and_empty_profile_registry(monkeypatch):
+def test_version_profiles_and_empty_profile_registry(monkeypatch, tmp_path):
     assert runner.invoke(cli.app, ["version"]).exit_code == 0
     result = runner.invoke(cli.app, ["profiles"])
     assert result.exit_code == 0 and "faers_drug_normalization" in result.stdout
+
+    legacy_yaml = """
+profile_name: legacy_cli
+profile_version: 0.1.0
+task:
+  operation: drug_normalization
+  mapping_intent: ingredient_level_analysis
+  target_terminology: RxNorm
+  desired_granularity: ingredient
+knowledge:
+  primary_resources: [RxNorm]
+"""
+    legacy_path = tmp_path / "legacy.yaml"
+    legacy_path.write_text(legacy_yaml, encoding="utf-8")
+    migrated = runner.invoke(cli.app, ["profiles", "migrate", str(legacy_path)])
+    assert migrated.exit_code == 0, migrated.output
+    assert "profile_schema: 2" in migrated.stdout
+    bad_migrate = runner.invoke(cli.app, ["profiles", "migrate", str(tmp_path / "missing.yaml")])
+    assert bad_migrate.exit_code == 2
+
     monkeypatch.setattr(cli, "available_profiles", lambda: [])
     result = runner.invoke(cli.app, ["profiles"])
     assert result.exit_code == 1 and "no profiles" in result.stdout

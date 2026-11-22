@@ -30,7 +30,7 @@ from biosemalign.schemas.decision import (
 )
 from biosemalign.schemas.knowledge import KnowledgePackage, QualifiedCode
 from biosemalign.schemas.provenance import Provenance
-from biosemalign.schemas.sau import SemanticAlignmentUnit
+from biosemalign.schemas.sau import SemanticAlignmentUnit, canonical_preserved_attributes
 
 __all__ = ["DecisionRouter", "decision_concordance", "to_review_artifact", "to_review_item"]
 
@@ -72,8 +72,8 @@ class DecisionRouter:
             proposal,
             package,
             validation,
-            target_vocabulary=self.profile.task.target_terminology,
-            source_vocabulary=self.profile.task.source_vocabulary(
+            target_vocabulary=self.profile.target.terminology,
+            source_vocabulary=self.profile.target.source_vocabulary(
                 proposal.source_level_concept.vocabulary
                 if proposal.source_level_concept is not None
                 else None
@@ -117,9 +117,7 @@ class DecisionRouter:
                 if rejected
                 else proposal.relationship_to_source
             ),
-            preserved_attributes=sau.attributes.model_dump(
-                exclude_none=True, exclude={"extensions"}
-            ),
+            preserved_attributes=canonical_preserved_attributes(sau.attributes),
             semantic_loss=[] if rejected else proposal.semantic_loss,
             unsupported_inferences=[] if rejected else proposal.unsupported_inferences,
             missing_information=(
@@ -133,6 +131,7 @@ class DecisionRouter:
             routing_reasons=reasons,
             concordance_state=concordance_state,
             matched_codes=matched_codes,
+            refinement=None if rejected else package.refinement,
             provenance=provenance,
         )
 

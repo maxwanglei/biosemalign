@@ -6,11 +6,13 @@ each workflow tier matched — can use them without importing the package.
 
 from __future__ import annotations
 
+from typing import Any, Literal
+
 from pydantic import Field
 
 from biosemalign.schemas.base import BioSemAlignModel
 
-__all__ = ["EquivalenceGroup", "QualifiedCode"]
+__all__ = ["EquivalenceGroup", "QualifiedCode", "RefinementOutcome"]
 
 
 class QualifiedCode(BioSemAlignModel):
@@ -39,3 +41,14 @@ class EquivalenceGroup(BioSemAlignModel):
             "profile names conflict vocabularies, two codes from that pool."
         ),
     )
+
+
+class RefinementOutcome(BioSemAlignModel):
+    """Whether slot-based refinement narrowed a coarse anchor to a single specific concept."""
+
+    status: Literal["unique", "none", "multiple", "not_applicable"]
+    anchor: QualifiedCode | None = None
+    slots_checked: dict[str, Any] = Field(default_factory=dict)
+    candidates: list[QualifiedCode] = Field(default_factory=list)
+    selected: QualifiedCode | None = None
+    detail: str

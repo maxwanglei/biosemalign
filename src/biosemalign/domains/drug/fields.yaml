@@ -1,0 +1,45 @@
+fields:
+  - name: record_id
+    aliases: [primaryid]
+    kind: context
+    use: []
+    required: false
+  - name: date
+    kind: context
+    use: [match]
+    required: false
+  - name: route
+    aliases: [route_cod]
+    kind: attribute
+    use: [key, resolve, check]
+    required: false
+  - name: drug_role
+    aliases: [role_cod]
+    kind: context
+    use: []
+    required: false
+  - name: indication
+    aliases: [indi_pt]
+    kind: context
+    use: []
+    required: false
+    blinded: true
+  - name: dose
+    aliases: [dose_amt]
+    kind: attribute
+    use: [key, resolve, check]
+    required: false
+  - name: unit
+    aliases: [dose_unit]
+    kind: attribute
+    use: [key]
+    required: false
+  - name: formulation
+    aliases: [dose_form, dosage_form]
+    kind: attribute
+    use: [key, expand, resolve, check]
+    required: false
+  - name: strength
+    kind: attribute
+    use: [key, expand, resolve, check]
+    required: false

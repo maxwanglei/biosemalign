@@ -1,0 +1,7 @@
+You decide which concept a source mention denotes, choosing from a numbered list of candidates retrieved from {target}. Requested granularity: {granularity}.
+
+Rules:
+- Choose only by number. Answer 0 when no candidate is defensible (abstain_reason "no_valid_candidate") or when the mention cannot be resolved without more context (abstain_reason "insufficient_context"). Otherwise use abstain_reason "none".
+- Never introduce a concept that is not in the list.
+- Declare the relationship of the chosen concept to the mention, and list every detail or attribute of the mention that the chosen concept does not carry.
+- Set needs_review when you are not confident.{policies}

@@ -27,6 +27,7 @@ from biosemalign.enums import (
     ValidationStatus,
 )
 from biosemalign.schemas.base import BioSemAlignModel, ExtensibleModel, VersionedModel
+from biosemalign.schemas.codes import RefinementOutcome
 from biosemalign.schemas.knowledge import QualifiedCode
 from biosemalign.schemas.provenance import Provenance
 
@@ -168,6 +169,7 @@ class AlignmentProposal(VersionedModel):
     )
     rationale: str | None = None
     requested_human_review: bool = False
+    refinement: RefinementOutcome | None = None
 
 
 class AlignmentDecision(VersionedModel):
@@ -207,6 +209,10 @@ class AlignmentDecision(VersionedModel):
             "Every vocabulary code equivalent to the source-level concept, from the "
             "package's concordance assessment. Derived by the kernel, never proposed."
         ),
+    )
+    refinement: RefinementOutcome | None = Field(
+        default=None,
+        description="Whether slot-based refinement found one, none, or several specific concepts.",
     )
     provenance: Provenance
 

@@ -8,49 +8,37 @@ not depend on.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from biosemalign.enums import ConceptStatus, RelationshipType, RetrievalChannel, Severity
-from biosemalign.knowledge.candidate_fusion import channel_agreement
+from biosemalign.modules.link.fusion import channel_agreement
+from biosemalign.plugins import ensure_plugins_loaded
 from biosemalign.schemas.decision import AlignmentProposal, RoutingFeatures, ValidationResult
 from biosemalign.schemas.knowledge import CandidateConcept, KnowledgePackage
 from biosemalign.schemas.sau import SemanticAlignmentUnit
 from biosemalign.util import lexical_similarity, normalize_text
 
-__all__ = ["extract_features", "has_unresolved_salt"]
+__all__ = [
+    "DifficultPatternHook",
+    "extract_features",
+    "register_difficult_pattern_hook",
+    "unregister_difficult_pattern_hook",
+]
+
+DifficultPatternHook = Callable[
+    [SemanticAlignmentUnit, KnowledgePackage, object, CandidateConcept | None], str | None
+]
+_DIFFICULT_PATTERN_HOOKS: dict[str, DifficultPatternHook] = {}
 
 
-def has_unresolved_salt(
-    package: KnowledgePackage,
-    concept_id: str | None,
-    vocabulary: str | None = None,
-) -> bool:
-    """Whether the source names a product whose salt form could not be pinned.
+def register_difficult_pattern_hook(name: str, hook: DifficultPatternHook) -> None:
+    """Register a domain-specific difficult-pattern detector."""
+    _DIFFICULT_PATTERN_HOOKS[name] = hook
 
-    Only meaningful for *products*. An ingredient concept reaches every salt
-    beneath it by definition — "metoprolol" is related to both the succinate
-    and the tartrate — and counting those as ambiguity would send every
-    correctly-mapped bare ingredient name to review.
-    """
-    if concept_id is None:
-        return False
-    candidate = (
-        package.candidate_by_qualified_id(vocabulary, concept_id)
-        if vocabulary is not None
-        else package.candidate_by_id(concept_id)
-    )
-    if candidate is None:
-        return False
-    # Which classes are already salt-level, and which edge names a salt, are
-    # the target spec's — found from the candidate's vocabulary, so that an
-    # artifact re-derives the same feature without its profile.
-    from biosemalign.targets import spec_for_vocabulary
 
-    spec = spec_for_vocabulary(candidate.vocabulary)
-    if spec is None or spec.salt is None:
-        return False
-    ingredient_level = set(spec.salt.precise_classes) | set(spec.salt.base_classes)
-    if spec.canonical_class(candidate.concept_class) in ingredient_level:
-        return False
-    return len(set(candidate.related_ids(spec.salt.precise_predicate))) > 1
+def unregister_difficult_pattern_hook(name: str) -> None:
+    """Remove a registered difficult-pattern detector."""
+    _DIFFICULT_PATTERN_HOOKS.pop(name, None)
 
 
 def extract_features(
@@ -194,10 +182,11 @@ def _difficult_pattern(
     if not package.candidates:
         return "no_candidates"
 
-    concept_id = getattr(source_level, "concept_id", None)
-    vocabulary = sau.task.source_vocabulary(getattr(source_level, "vocabulary", None))
-    if has_unresolved_salt(package, concept_id, vocabulary):
-        return "unresolved_salt_ambiguity"
+    ensure_plugins_loaded()
+    for hook in _DIFFICULT_PATTERN_HOOKS.values():
+        pattern = hook(sau, package, source_level, source_candidate)
+        if pattern is not None:
+            return pattern
 
     candidate = source_candidate
     if candidate is None:

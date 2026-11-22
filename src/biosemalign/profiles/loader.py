@@ -15,6 +15,7 @@ inside the All of Us Workbench and on HPC login nodes.
 
 from __future__ import annotations
 
+import warnings
 from importlib import resources
 from pathlib import Path
 
@@ -22,12 +23,36 @@ import yaml
 from pydantic import ValidationError
 
 from biosemalign.exceptions import ProfileError
+from biosemalign.plugins import ensure_plugins_loaded, load_domain
+from biosemalign.profiles.migrate import is_schema_1_profile, migrate_profile_data
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.settings import get_settings
 
-__all__ = ["available_profiles", "load_profile", "load_profile_file"]
+__all__ = [
+    "available_profiles",
+    "load_profile",
+    "load_profile_file",
+    "register_profile_package",
+    "unregister_profile_package",
+]
 
 _PACKAGED = "biosemalign.profiles.defaults"
+_REGISTERED_PACKAGES: dict[str, str] = {}
+
+
+def register_profile_package(domain: str, package: str) -> None:
+    """Register a package containing YAML task profiles for ``domain``."""
+    _REGISTERED_PACKAGES[domain.casefold()] = package
+
+
+def unregister_profile_package(domain: str) -> None:
+    """Remove a domain's registered profile package."""
+    _REGISTERED_PACKAGES.pop(domain.casefold(), None)
+
+
+def _profile_packages() -> list[str]:
+    ensure_plugins_loaded()
+    return [_PACKAGED, *_REGISTERED_PACKAGES.values()]
 
 
 def _search_dirs() -> list[Path]:
@@ -60,9 +85,10 @@ def load_profile(name_or_path: str | Path) -> TaskProfile:
             if path.is_file():
                 return load_profile_file(path)
 
-    packaged = resources.files(_PACKAGED).joinpath(f"{name}.yaml")
-    if packaged.is_file():
-        return _parse(packaged.read_text(encoding="utf-8"), origin=f"{_PACKAGED}/{name}.yaml")
+    for package in _profile_packages():
+        packaged = resources.files(package).joinpath(f"{name}.yaml")
+        if packaged.is_file():
+            return _parse(packaged.read_text(encoding="utf-8"), origin=f"{package}/{name}.yaml")
 
     raise ProfileError(
         f"unknown profile {name!r}. Available packaged profiles: "
@@ -76,9 +102,10 @@ def available_profiles() -> list[str]:
     for directory in _search_dirs():
         if directory.is_dir():
             names.update(p.stem for p in directory.iterdir() if p.suffix in {".yaml", ".yml"})
-    for entry in resources.files(_PACKAGED).iterdir():
-        if entry.name.endswith(".yaml"):
-            names.add(entry.name.removesuffix(".yaml"))
+    for package in _profile_packages():
+        for entry in resources.files(package).iterdir():
+            if entry.name.endswith(".yaml"):
+                names.add(entry.name.removesuffix(".yaml"))
     return sorted(names)
 
 
@@ -91,7 +118,22 @@ def _parse(text: str, *, origin: str) -> TaskProfile:
     if not isinstance(raw, dict):
         raise ProfileError(f"{origin} must contain a YAML mapping at the top level")
 
+    if is_schema_1_profile(raw):
+        warnings.warn(
+            f"{origin} uses profile Schema 1, which is deprecated and will be removed in the "
+            "next release. Run 'biosemalign profiles migrate' to convert it to profile_schema: 2.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        try:
+            raw = migrate_profile_data(raw)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProfileError(f"{origin} cannot be migrated from Schema 1:\n{exc}") from exc
+
     try:
-        return TaskProfile.model_validate(raw)
+        profile = TaskProfile.model_validate(raw)
     except ValidationError as exc:
         raise ProfileError(f"{origin} is not a valid task profile:\n{exc}") from exc
+    if profile.domain:
+        load_domain(profile.domain)
+    return profile

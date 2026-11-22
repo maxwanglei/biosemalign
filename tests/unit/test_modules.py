@@ -11,8 +11,6 @@ import pytest
 import yaml
 from pydantic import ValidationError
 from tests.lexicon_support import (
-    CONCORDANCE_WORKFLOW,
-    CONCORDANT,
     build_bundle,
     concordance_profile,
     lexicon_pipeline,
@@ -21,7 +19,7 @@ from tests.links_support import write_athena, write_dictionary, write_mesh, writ
 from tests.unit.test_lexicon import _resign
 
 from biosemalign import BioSemAlign, verify_artifact
-from biosemalign.coding import Coder, CodeSet
+from biosemalign.domains.drug.tools.links import LINK_OVERLAYS, derive_links
 from biosemalign.enums import (
     Authority,
     ConceptStatus,
@@ -32,13 +30,24 @@ from biosemalign.enums import (
 from biosemalign.exceptions import ConfigurationError
 from biosemalign.knowledge.lexicon.build import build_lexicon, load_declaration
 from biosemalign.knowledge.lexicon.contract import LexiconManifest
-from biosemalign.knowledge.lexicon.links import LINK_OVERLAYS, derive_links
-from biosemalign.linking import Linker, derive_link_set
-from biosemalign.ops import OpContext
-from biosemalign.ops.base import PassToNext
-from biosemalign.ops.registry import available_ops, build_op, canonical_kind, register_op
+from biosemalign.modules import (
+    CandidateSet,
+    Check,
+    Cleaner,
+    Expander,
+    Linker,
+    Matcher,
+    OpContext,
+    PassToNext,
+    Resolver,
+    Selector,
+    available,
+    build,
+    register,
+)
+from biosemalign.modules.link.targets import derive_link_set
+from biosemalign.profiles.loader import load_profile_file
 from biosemalign.profiles.schema import TaskProfile, TierConfig
-from biosemalign.resolution import Resolver
 from biosemalign.schemas.codes import EquivalenceGroup, QualifiedCode
 from biosemalign.schemas.knowledge import (
     CandidateConcept,
@@ -92,20 +101,22 @@ VOCABULARIES = [
 
 
 def module_profile(tier: Mapping[str, Any], *, spec: str | None = None) -> TaskProfile:
-    """A two-tier profile written with the module keys."""
+    """A Schema 2 profile written with the one module vocabulary."""
     payload: dict[str, Any] = {
+        "profile_schema": 2,
         "profile_name": "modules",
         "profile_version": "1",
+        "domain": "drug",
+        "workflow": "mapping",
         "target": {
             "spec": spec or "rxnorm",
             "terminology": "RxNorm",
-            "granularity": "ingredient",
+            "level": "ingredient",
             "source_terminologies": ["RxNorm Extension"],
         },
         "task": {"operation": "drug_normalization", "mapping_intent": "ingredient_level_analysis"},
         "knowledge": {
-            "primary_resources": ["RxNorm"],
-            "secondary_resources": [v for v in VOCABULARIES if v != "RxNorm"],
+            "resources": list(VOCABULARIES),
             "allowed_relationships": [
                 "has_ingredient",
                 "has_precise_ingredient",
@@ -114,29 +125,34 @@ def module_profile(tier: Mapping[str, Any], *, spec: str | None = None) -> TaskP
                 "consists_of",
             ],
         },
-        "workflow": {
-            "tiers": [
-                {"name": "step1", **tier},
-                {
-                    "name": "fallback",
-                    "coding": {
-                        "op": "lexicon",
-                        "options": {"vocabularies": ["RxNorm"], "methods": ["exact", "bm25"]},
-                    },
-                },
-            ]
-        },
+        "tiers": [
+            {"name": "step1", **tier},
+            {
+                "name": "fallback",
+                "match": [{"op": "exact", "options": {"vocabularies": ["RxNorm"]}}],
+                "pass_on": ["NO_VALID_MAPPING"],
+            },
+            {
+                "name": "fallback_lexical",
+                "match": [
+                    {"op": "lexical", "options": {"vocabularies": ["RxNorm"], "method": "bm25"}}
+                ],
+            },
+        ],
     }
     return TaskProfile.model_validate(payload)
 
 
 STEP1 = {
-    "coding": [{"op": "exact", "options": {"vocabularies": VOCABULARIES}}],
-    "linking": {
-        "op": "concordance",
-        "options": {"conflict_vocabularies": ["RxNorm", "RxNorm Extension"]},
+    "match": [{"op": "exact", "options": {"vocabularies": VOCABULARIES}}],
+    "link": {
+        "op": "standard",
+        "options": {
+            "concordance": True,
+            "conflict_vocabularies": ["RxNorm", "RxNorm Extension"],
+        },
     },
-    "resolution": {
+    "resolve": {
         "op": "concordant",
         "options": {"authority_sources": ["RxNorm", "RxNorm Extension"]},
     },
@@ -153,44 +169,39 @@ def step1(linked: tuple[Path, LexiconManifest], tmp_path: Path) -> Iterator[BioS
 # -- registry ----------------------------------------------------------------------
 
 
-def test_module_kinds_name_the_stages() -> None:
-    assert canonical_kind("code") == "retrieve"
-    assert canonical_kind("link") == "fuse"
-    assert canonical_kind("resolve") == "propose"
-    assert canonical_kind("validate") == "validate"
+def test_module_kinds_and_built_ins() -> None:
     with pytest.raises(ValueError, match="unknown operator kind"):
-        canonical_kind("decide")
-    assert {"exact", "lexicon", "dense", "rxnav"} <= set(available_ops("code"))
-    assert available_ops("code") == available_ops("retrieve")
-    assert {"concordance", "cross_vocab_concordance", "knowledge_package"} <= set(
-        available_ops("link")
-    )
-    assert {"concordant", "concordant_exact", "adjudicator", "llm"} <= set(available_ops("resolve"))
+        available("decide")  # type: ignore[arg-type]
+    assert {"unicode_normalize", "drug.extract_strength"} <= set(available("clean"))
+    assert {"exact", "lexical", "dense", "drug.rxnav"} <= set(available("match"))
+    assert "refine_by_slots" in available("expand")
+    assert available("link") == ["standard"]
+    assert available("resolve") == ["concordant", "llm", "rules"]
+    assert {"drug.semantics", "policy"} <= set(available("check"))
 
 
 def test_built_in_operators_implement_the_module_protocols(
     step1: BioSemAlign,
 ) -> None:
     tier = step1.kernel.workflow.tiers[0]
-    assert isinstance(tier.retrievers[0], Coder)
-    assert isinstance(tier.fuser, Linker)
-    assert isinstance(tier.proposer, Resolver)
+    assert isinstance(tier.matchers[0], Matcher)
+    assert isinstance(tier.linker, Linker)
+    assert isinstance(tier.resolver, Resolver)
     sau = step1.build_sau(step1.make_request("Alphabrand"))[0]
-    codes = tier.retrievers[0].code(sau)
-    assert isinstance(codes, CodeSet) and codes.candidates
-    package = tier.fuser.link(sau, [codes])
+    codes = tier.matchers[0].match(sau)
+    assert isinstance(codes, CandidateSet) and codes.candidates
+    package = tier.linker.link(sau, [codes])
     assert package.concordance is not None
-    assert isinstance(tier.proposer.resolve(sau, package), PassToNext | object)
+    assert isinstance(tier.resolver.resolve(sau, package), PassToNext | object)
 
 
-# -- third-party module-spelled operators ----------------------------------------------
+# -- third-party operators ---------------------------------------------------------------
 
 
-class _UpperCoder:
-    """A coder spelled only with ``code``: exact lexicon matches of the upper-cased text."""
-
-    op_id = "upper_coder"
+class _UpperMatcher:
+    op_id = "upper_matcher"
     version = "1"
+    uses_model = False
     requires_network = False
 
     def __init__(self, inner: Any) -> None:
@@ -200,24 +211,26 @@ class _UpperCoder:
     def options(self) -> dict[str, Any]:
         return {"wraps": self.inner.op_id}
 
-    def code(self, sau: Any) -> CodeSet:
-        return self.inner.retrieve(sau)
+    def match(self, sau: Any) -> CandidateSet:
+        return self.inner.match(sau)
 
 
 class _PassingLinker:
     op_id = "passing_linker"
     version = "1"
+    uses_model = False
 
     def __init__(self, inner: Any) -> None:
         self.inner = inner
 
-    def link(self, sau: Any, code_sets: Sequence[CodeSet]) -> KnowledgePackage:
-        return self.inner.fuse(sau, code_sets)
+    def link(self, sau: Any, candidate_sets: Sequence[CandidateSet]) -> KnowledgePackage:
+        return self.inner.link(sau, candidate_sets)
 
 
 class _AlwaysPass:
     op_id = "always_pass"
     version = "1"
+    uses_model = False
     requires_network = False
 
     def resolve(self, sau: Any, package: KnowledgePackage) -> PassToNext:
@@ -227,86 +240,149 @@ class _AlwaysPass:
         raise AssertionError("a passing resolver is never asked for provenance")
 
 
-def test_operators_spelled_with_module_names_are_adapted(
+def test_registered_custom_operators_plug_directly_into_tiers(
     linked: tuple[Path, LexiconManifest], tmp_path: Path
 ) -> None:
-    def coder(context: OpContext, options: Mapping[str, Any]) -> _UpperCoder:
-        return _UpperCoder(build_op("code", "exact", context, {"vocabularies": VOCABULARIES}))
+    def matcher(context: OpContext, options: Mapping[str, Any]) -> _UpperMatcher:
+        return _UpperMatcher(build("match", "exact", context, {"vocabularies": VOCABULARIES}))
 
     def linker(context: OpContext, options: Mapping[str, Any]) -> _PassingLinker:
-        return _PassingLinker(build_op("link", "concordance", context, {}))
+        return _PassingLinker(build("link", "standard", context, {"concordance": True}))
 
-    register_op("code", "upper_coder", coder)
-    register_op("link", "passing_linker", linker)
-    register_op("resolve", "always_pass", lambda context, options: _AlwaysPass())
-    register_op("resolve", "not_an_operator", lambda context, options: object())
+    register("match", "upper_matcher", matcher)
+    register("link", "passing_linker", linker)
+    register("resolve", "always_pass", lambda context, options: _AlwaysPass())
+    register("resolve", "not_an_operator", lambda context, options: object())
     bundle, manifest = linked
-    tier = {"coding": "upper_coder", "linking": "passing_linker", "resolution": "always_pass"}
+    tier = {"match": "upper_matcher", "link": "passing_linker", "resolve": "always_pass"}
     with lexicon_pipeline(tmp_path, bundle, manifest, profile=module_profile(tier)) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request("Alphabrand"))
         built = pipeline.kernel.workflow.tiers[0]
-        assert built.retrievers[0].requires_network is False
-        assert built.retrievers[0].options == {"wraps": "lexicon"}
-        assert built.proposer.requires_network is False
+        assert built.matchers[0].requires_network is False
+        assert built.matchers[0].options == {"wraps": "exact"}
+        assert built.resolver.requires_network is False
     attempt = artifact.decision.provenance.resolution.attempts[0]
     assert (attempt.tier, attempt.reason) == ("step1", "declined_by_policy")
     operators = artifact.decision.provenance.workflow.tiers[0].operators
-    assert [op.op_id for op in operators] == ["upper_coder", "passing_linker", "always_pass"]
+    assert [op.op_id for op in operators] == ["upper_matcher", "passing_linker", "always_pass"]
     assert verify_artifact(artifact).valid
 
     context = OpContext(profile=module_profile(STEP1))
-    with pytest.raises(ConfigurationError, match="does not implement the ProposeOp"):
-        build_op("resolve", "not_an_operator", context)
+    with pytest.raises(ConfigurationError, match="does not implement the Resolver"):
+        build("resolve", "not_an_operator", context)
 
 
-# -- profiles: two spellings, one profile -----------------------------------------------
-
-
-def test_module_keys_and_stage_keys_are_the_same_profile(
-    lexicon: tuple[Path, LexiconManifest], tmp_path: Path
+def test_schema_1_migration_splits_legacy_lexicon_and_preserves_concordance(
+    tmp_path: Path,
 ) -> None:
-    old = concordance_profile()
-    payload = old.model_dump(mode="json")
-    new_tiers = []
-    for tier in CONCORDANCE_WORKFLOW["tiers"]:
-        renamed = {"name": tier["name"], "coding": tier["retrievers"]}
-        if "fuser" in tier:
-            renamed["linking"] = tier["fuser"]
-        if "proposer" in tier:
-            renamed["resolution"] = tier["proposer"]
-        new_tiers.append(renamed)
-    payload["workflow"] = {"tiers": new_tiers}
-    new = TaskProfile.model_validate(payload)
-    assert new.model_dump() == old.model_dump()
+    schema1_payload = {
+        "profile_name": "legacy_step1",
+        "profile_version": "0.1.0",
+        "target": {
+            "spec": "rxnorm",
+            "terminology": "RxNorm",
+            "granularity": "ingredient",
+            "source_terminologies": ["RxNorm Extension"],
+        },
+        "task": {"operation": "drug_normalization", "mapping_intent": "ingredient_level_analysis"},
+        "knowledge": {
+            "primary_resources": ["RxNorm"],
+            "secondary_resources": ["UNII"],
+        },
+        "workflow": {
+            "tiers": [
+                {
+                    "name": "step1",
+                    "coding": {"op": "exact", "options": {"vocabularies": ["RxNorm", "UNII"]}},
+                    "linking": "cross_vocab_concordance",
+                    "resolution": {
+                        "op": "concordant_exact",
+                        "options": {"authority_sources": ["RxNorm"]},
+                    },
+                },
+                {
+                    "name": "fallback",
+                    "retrievers": [{"op": "lexicon", "options": {"vocabularies": ["RxNorm"]}}],
+                },
+            ]
+        },
+    }
+    path = tmp_path / "legacy_step1.yaml"
+    path.write_text(yaml.safe_dump(schema1_payload), encoding="utf-8")
+    with pytest.warns(DeprecationWarning):
+        migrated = load_profile_file(path)
+    assert migrated.profile_schema == 2
+    assert [t.name for t in migrated.tiers] == ["step1", "fallback_exact", "fallback"]
+    assert migrated.tiers[0].link.op == "standard"
+    assert migrated.tiers[0].link.options == {"concordance": True}
+    assert migrated.tiers[0].resolve.op == "concordant"
+    assert migrated.tiers[1].match[0].op == "exact"
+    assert [d.value for d in migrated.tiers[1].pass_on] == ["NO_VALID_MAPPING"]
+    assert migrated.tiers[2].match[0].op == "lexical"
 
-    bundle, manifest = lexicon
-    artifacts = []
-    for name, profile in (("old", old), ("new", new)):
-        with lexicon_pipeline(tmp_path / name, bundle, manifest, profile=profile) as pipeline:
-            artifacts.append(pipeline.align_artifact(pipeline.make_request(CONCORDANT)))
-    first, second = (a.decision for a in artifacts)
-    assert first.provenance.workflow == second.provenance.workflow
-    assert first.selected_concepts == second.selected_concepts
-    assert first.matched_codes == second.matched_codes
+
+def test_standard_linker_combines_rrf_and_concordance(
+    linked: tuple[Path, LexiconManifest], tmp_path: Path
+) -> None:
+    bundle, manifest = linked
+    tiers = [
+        {
+            "name": "hybrid_concordant",
+            "match": [
+                {"op": "exact", "options": {"vocabularies": ["RxNorm", "UNII"]}},
+                {"op": "lexical", "options": {"vocabularies": ["RxNorm"], "method": "bm25"}},
+            ],
+            "link": {"op": "standard", "options": {"merge": "rrf", "k": 30, "concordance": True}},
+            "resolve": {"op": "concordant", "options": {"authority_sources": ["RxNorm"]}},
+        }
+    ]
+    payload = module_profile(STEP1).model_dump(mode="json")
+    payload["knowledge"]["resources"] = ["RxNorm", "UNII"]
+    payload["tiers"] = tiers
+    profile = TaskProfile.model_validate(payload)
+    with lexicon_pipeline(tmp_path, bundle, manifest, profile=profile) as pipeline:
+        sau = pipeline.build_sau(pipeline.make_request("Alphamab"))[0]
+        package = pipeline.build_package(sau)
+        assert package.concordance is not None
+        assert package.concordance.state is ConcordanceState.MULTI_SOURCE_CONCORDANT
+        assert package.links is not None
+        artifact = pipeline.align_artifact(pipeline.make_request("Alphamab"))
+    assert artifact.decision.selected_concepts[0].concept_id == "10"
+    assert verify_artifact(artifact).valid
 
 
 def test_tier_module_keys_are_checked() -> None:
-    with pytest.raises(ValidationError, match="both 'coding' and 'retrievers'"):
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         TierConfig.model_validate({"name": "t", "coding": "exact", "retrievers": ["lexicon"]})
-    tier = TierConfig.model_validate({"name": "t", "coding": "exact", "resolution": "concordant"})
-    assert [op.op for op in tier.retrievers] == ["exact"] and tier.proposer.op == "concordant"
+    tier = TierConfig.model_validate(
+        {
+            "name": "t",
+            "clean": [{"op": "unicode"}],
+            "match": [{"op": "exact"}],
+            "link": {"op": "standard"},
+            "resolve": {"op": "concordant"},
+            "pass_on": ["NO_VALID_MAPPING"],
+            "pass_on_review_request": True,
+        }
+    )
+    assert [op.op for op in tier.clean] == ["unicode"]
+    assert [op.op for op in tier.match] == ["exact"]
+    assert tier.link is not None and tier.link.op == "standard"
+    assert tier.resolve is not None and tier.resolve.op == "concordant"
+    assert tier.pass_on == ["NO_VALID_MAPPING"]
+    assert tier.pass_on_review_request is True
 
 
-def test_the_exact_coder_is_the_lexicon_coder_on_exact_names(
+def test_the_exact_matcher_matches_exact_names_only(
     lexicon: tuple[Path, LexiconManifest], tmp_path: Path
 ) -> None:
     bundle, manifest = lexicon
     with lexicon_pipeline(tmp_path, bundle, manifest, profile=concordance_profile()) as pipeline:
         context = OpContext(profile=pipeline.profile, knowledge=pipeline.knowledge)
-        exact = build_op("code", "exact", context, {"vocabularies": ["RxNorm"]})
-        assert (exact.op_id, exact.options["methods"]) == ("lexicon", ["exact"])
-        with pytest.raises(ConfigurationError, match="exact names only"):
-            build_op("code", "exact", context, {"methods": ["bm25"]})
+        exact = build("match", "exact", context, {"vocabularies": ["RxNorm"]})
+        assert exact.op_id == "exact"
+        with pytest.raises(ConfigurationError, match="invalid options"):
+            build("match", "exact", context, {"methods": ["bm25"]})
 
 
 # -- links --------------------------------------------------------------------------------
@@ -329,7 +405,7 @@ def test_the_kernel_links_every_matched_code_into_the_target(step1: BioSemAlign)
     artifact = step1.align_artifact(step1.make_request("Alphabrand"))
     package = artifact.knowledge_package
     assert package.links is not None
-    assert (package.links.target_spec, package.links.granularity) == ("rxnorm@1.0", "ingredient")
+    assert (package.links.target_spec, package.links.granularity) == ("rxnorm@1.1", "ingredient")
     assert _links(package) == {
         ("RxNorm:40", "RxNorm:40", "RxNorm:10", "PROJECTION"),
         ("Drugs@FDA:000001-001", "RxNorm:40", "RxNorm:10", "PROJECTION"),
@@ -339,7 +415,7 @@ def test_the_kernel_links_every_matched_code_into_the_target(step1: BioSemAlign)
     assert projection.predicates == ["has_ingredient"]
     assert projection.assertion_sources[0].startswith("OMOP brand products")
     assert package.links.targets_of("RxNorm", "40")[0].concept_code == "10"
-    assert artifact.decision.provenance.workflow.target_spec == "rxnorm@1.0"
+    assert artifact.decision.provenance.workflow.target_spec == "rxnorm@1.1"
 
     exact = step1.align_artifact(step1.make_request("Alphamab")).knowledge_package
     assert ("UNII:UNIIALPHA1", "RxNorm:10", "RxNorm:10", "EQUIVALENCE") in _links(exact)
@@ -459,7 +535,15 @@ def test_codes_leading_to_different_targets_are_reported_ambiguous() -> None:
         ("RxNorm", "MISSING"),
     }
     assert {t.concept_code for t in links.targets_of("RxNorm Extension", "E1")} == {"10", "11"}
-    assert derive_link_set(package.model_copy(update={"concordance": None}), RXNORM, "x") is None
+    direct_links = derive_link_set(
+        package.model_copy(update={"concordance": None}), RXNORM, "ingredient"
+    )
+    assert direct_links.links != []
+    assert {(lnk.source.concept_code, lnk.target.concept_code) for lnk in direct_links.links} == {
+        ("B1", "10"),
+        ("E1", "10"),
+        ("E1", "11"),
+    }
     assert derive_link_set(package, RXNORM, "nonsense").links == []
 
 
@@ -478,25 +562,56 @@ def test_the_concordant_resolver_uses_target_neutral_pass_reasons(step1: BioSemA
 
 def test_a_resolver_without_kernel_links_applies_the_same_rule(step1: BioSemAlign) -> None:
     sau = step1.build_sau(step1.make_request("Alphabrand"))[0]
-    package = step1.retrieve_knowledge(sau)
-    resolver = step1.kernel.workflow.tiers[0].proposer
+    package = step1.build_package(sau)
+    resolver = step1.kernel.workflow.tiers[0].resolver
     with_links = resolver.resolve(sau, package)
     without = resolver.resolve(sau, package.model_copy(update={"links": None}))
     assert with_links.selected_concepts == without.selected_concepts
     lone = step1.build_sau(step1.make_request("Lonebrand"))[0]
-    lone_package = step1.retrieve_knowledge(lone).model_copy(update={"links": None})
+    lone_package = step1.build_package(lone).model_copy(update={"links": None})
     assert resolver.resolve(lone, lone_package).reason == "no_target_link"
 
 
-def test_module_packages_expose_their_protocols() -> None:
-    import biosemalign.coding as coding
-    import biosemalign.linking as linking
-    import biosemalign.resolution as resolution
+def test_public_surface_has_no_legacy_vocabulary() -> None:
+    import importlib
 
-    for module in (coding, linking, resolution):
+    import biosemalign
+    import biosemalign.api as api
+    import biosemalign.kernel as kernel
+    import biosemalign.modules as modules
+    import biosemalign.workflows as workflows
+    from biosemalign.workflows.coding import code_terms
+
+    for removed in ("ops", "adjudication", "coding", "linking", "resolution", "pipelines"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(f"biosemalign.{removed}")
+
+    legacy_names = {
+        "TransformOp",
+        "RetrieveOp",
+        "FuseOp",
+        "ProposeOp",
+        "ValidateOp",
+        "CodeSet",
+        "Coder",
+        "Adjudicator",
+        "retrieve_knowledge",
+        "adjudicate",
+        "available_ops",
+        "build_op",
+        "register_op",
+        "canonical_kind",
+    }
+    for module in (biosemalign, api, kernel, modules, workflows):
+        assert not (set(dir(module)) & legacy_names), f"legacy names in {module.__name__}"
         with pytest.raises(AttributeError):
             module.nothing_here  # noqa: B018
-    assert resolution.PassToNext is PassToNext
+    assert modules.PassToNext is PassToNext
+    assert callable(code_terms)
+    assert isinstance(object, object)
+    assert all(
+        cls is not None for cls in (Cleaner, Matcher, Expander, Linker, Resolver, Selector, Check)
+    )
     assert copy.copy(LinkKind.PROJECTION) is LinkKind.PROJECTION
     assert RetrievalChannel.EXACT_LOOKUP in {RetrievalChannel.EXACT_LOOKUP}
 
@@ -504,9 +619,9 @@ def test_module_packages_expose_their_protocols() -> None:
 def test_bulk_tools_refuse_a_granularity_the_spec_lacks(
     linked: tuple[Path, LexiconManifest], tmp_path: Path
 ) -> None:
-    from biosemalign.coding import code_terms
     from biosemalign.exceptions import LexiconError
     from biosemalign.knowledge.lexicon.audit import audit_bundle
+    from biosemalign.workflows.coding import code_terms
 
     bundle, _ = linked
     terms = tmp_path / "terms.csv"

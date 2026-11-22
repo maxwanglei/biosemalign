@@ -11,7 +11,7 @@ from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from biosemalign.pipelines.base import BatchInputError, BioSemAlign
+    from biosemalign.api import BatchInputError, BioSemAlign
     from biosemalign.schemas.artifact import BatchAlignmentRecord
     from biosemalign.schemas.provenance import RunContext
 

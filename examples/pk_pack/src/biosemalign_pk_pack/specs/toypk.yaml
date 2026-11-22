@@ -1,0 +1,15 @@
+spec_id: toypk
+version: "1.0"
+target: ToyPK
+family: [ToyPK]
+
+granularities:
+  Parameter:
+    via: []
+    terminal: [Parameter]
+
+losses:
+  - kind: specimen
+    rule: context
+    field: specimen
+    description: target parameter code does not carry biological specimen

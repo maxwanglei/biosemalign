@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "biosemalign-pk-pack"
+version = "0.1.0"
+description = "Example external BioSemAlign domain pack for synthetic pharmacokinetic parameters"
+requires-python = ">=3.12"
+dependencies = ["biosemalign"]
+
+[project.entry-points."biosemalign.plugins"]
+pk = "biosemalign_pk_pack:register"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/biosemalign_pk_pack"]

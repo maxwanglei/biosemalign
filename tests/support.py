@@ -12,10 +12,10 @@ from typing import Any
 from pydantic import BaseModel
 
 from biosemalign import BioSemAlign
-from biosemalign.adjudication.backend import Adjudicator
+from biosemalign.api import BatchInputError
+from biosemalign.domains.drug.providers.rxnav import PREDICATE_TO_TTY
 from biosemalign.enums import ResourceMode
-from biosemalign.knowledge.providers.rxnorm import PREDICATE_TO_TTY
-from biosemalign.pipelines.base import BatchInputError
+from biosemalign.modules import Resolver
 from biosemalign.profiles.loader import load_profile
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.settings import Settings
@@ -233,7 +233,7 @@ def make_pipeline(
     cache_dir: Path,
     *,
     profile: TaskProfile | None = None,
-    adjudicator: Adjudicator | None = None,
+    resolver: Resolver | None = None,
     workflow: Any = None,
 ) -> BioSemAlign:
     cache = seed_synthetic_cache(cache_dir)
@@ -241,7 +241,7 @@ def make_pipeline(
         profile or load_profile("faers_drug_normalization"),
         settings=synthetic_settings(cache_dir),
         cache=cache,
-        adjudicator=adjudicator,
+        resolver=resolver,
         workflow=workflow,
     )
 

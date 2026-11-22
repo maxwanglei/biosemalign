@@ -1,4 +1,9 @@
-"""Architecture test enforcing the Section 5.9 layer import rules."""
+"""Architecture test enforcing the Section 5.9 layer import rules.
+
+Modules are classified by their Section 5.9 / Appendix B target layers so that
+the violation lists can only shrink as work packages move code into ``modules/``
+and ``domains/drug/``.
+"""
 
 from __future__ import annotations
 
@@ -30,8 +35,10 @@ PREFIX_LAYERS: list[tuple[str, str]] = sorted(
         ("biosemalign._version", "foundation"),
         ("biosemalign.exceptions", "foundation"),
         ("biosemalign.logging", "foundation"),
+        ("biosemalign.plugins", "foundation"),
         ("biosemalign.profiles", "foundation"),
         ("biosemalign.settings", "foundation"),
+        ("biosemalign.storage.crosswalk_memo", "kernel"),
         ("biosemalign.storage", "foundation"),
         ("biosemalign.util", "foundation"),
         ("biosemalign.input", "input"),
@@ -39,22 +46,14 @@ PREFIX_LAYERS: list[tuple[str, str]] = sorted(
         ("biosemalign.resources", "knowledge"),
         ("biosemalign.targets", "knowledge"),
         ("biosemalign.modules", "modules"),
-        ("biosemalign.ops", "modules"),
-        ("biosemalign.adjudication", "modules"),
-        ("biosemalign.linking", "modules"),
-        ("biosemalign.resolution", "modules"),
         ("biosemalign.kernel", "kernel"),
-        ("biosemalign.pipelines.kernel", "kernel"),
         ("biosemalign.routing", "kernel"),
         ("biosemalign.validation", "kernel"),
         ("biosemalign.workflows", "workflows"),
-        ("biosemalign.pipelines.workflow", "workflows"),
-        ("biosemalign.coding", "workflows"),
         ("biosemalign.domains", "domains"),
         ("biosemalign.api", "surfaces"),
         ("biosemalign.cli", "surfaces"),
         ("biosemalign.evaluation", "surfaces"),
-        ("biosemalign.pipelines", "surfaces"),
         ("biosemalign.run_manifest", "surfaces"),
         ("biosemalign.testing", "surfaces"),
         ("biosemalign.verification", "surfaces"),
@@ -66,21 +65,20 @@ PREFIX_LAYERS: list[tuple[str, str]] = sorted(
 # target specs and linking rules.
 INTENTIONAL_EXCEPTIONS: frozenset[tuple[str, str]] = frozenset(
     {
-        ("biosemalign.schemas.artifact", "biosemalign.linking.core"),
+        ("biosemalign.schemas.artifact", "biosemalign.modules.link.targets"),
         ("biosemalign.schemas.artifact", "biosemalign.targets"),
         ("biosemalign.schemas.knowledge", "biosemalign.targets"),
         ("biosemalign.schemas.knowledge", "biosemalign.targets.spec"),
     }
 )
 
-# Current baseline violations from today's layout; this set may only shrink
-# across work packages.
+# Current baseline upward violations under Section 5.9 / Appendix B destinations;
+# this set may only shrink across work packages (21 in WP0 -> 14 in WP1).
 KNOWN_VIOLATIONS: frozenset[tuple[str, str]] = frozenset(
     {
-        ("biosemalign.input.adapters.existing", "biosemalign.pipelines.base"),
-        ("biosemalign.ops.builtin", "biosemalign.validation.drug_rules"),
-        ("biosemalign.ops.builtin", "biosemalign.validation.policy_dsl"),
-        ("biosemalign.pipelines.kernel", "biosemalign.pipelines.workflow"),
+        # Pre-existing non-WP0 upward edges (tracked in Section 11 Q8):
+        ("biosemalign.input.adapters.existing", "biosemalign.api"),
+        ("biosemalign.modules.check", "biosemalign.validation.policy_dsl"),
         ("biosemalign.profiles.schema", "biosemalign.targets"),
         ("biosemalign.profiles.schema", "biosemalign.targets.spec"),
         ("biosemalign.routing.conformal", "biosemalign.evaluation.metrics"),
@@ -89,6 +87,9 @@ KNOWN_VIOLATIONS: frozenset[tuple[str, str]] = frozenset(
         ("biosemalign.schemas.provenance", "biosemalign.util"),
     }
 )
+
+# Non-domain modules never import domain packs statically.
+KNOWN_DOMAIN_IMPORTS: frozenset[tuple[str, str]] = frozenset()
 
 
 def _discover_modules() -> dict[str, tuple[Path, bool]]:
@@ -153,6 +154,19 @@ def _upward_edges() -> set[tuple[str, str]]:
     return upward
 
 
+def _domain_import_edges() -> set[tuple[str, str]]:
+    modules = _discover_modules()
+    all_mods = set(modules)
+    domain_edges: set[tuple[str, str]] = set()
+    for mod, (path, is_pkg) in modules.items():
+        if _layer_of(mod) == "domains":
+            continue
+        for target in _extract_imports(mod, path, is_pkg, all_mods):
+            if _layer_of(target) == "domains":
+                domain_edges.add((mod, target))
+    return domain_edges
+
+
 def test_every_module_belongs_to_a_layer() -> None:
     modules = _discover_modules()
     assert modules
@@ -160,17 +174,17 @@ def test_every_module_belongs_to_a_layer() -> None:
         assert _layer_of(mod) in LAYERS
 
 
-def test_no_core_or_surface_module_imports_domains() -> None:
-    modules = _discover_modules()
-    all_mods = set(modules)
-    domain_imports: list[tuple[str, str]] = []
-    for mod, (path, is_pkg) in modules.items():
-        if _layer_of(mod) == "domains":
-            continue
-        for target in _extract_imports(mod, path, is_pkg, all_mods):
-            if _layer_of(target) == "domains":
-                domain_imports.append((mod, target))
-    assert domain_imports == []
+def test_no_new_core_or_surface_imports_of_domains() -> None:
+    unexpected = sorted(_domain_import_edges() - KNOWN_DOMAIN_IMPORTS)
+    assert unexpected == [], f"new non-domain imports of domain modules introduced: {unexpected}"
+
+
+def test_known_domain_imports_shrink_only() -> None:
+    resolved = sorted(KNOWN_DOMAIN_IMPORTS - _domain_import_edges())
+    assert resolved == [], (
+        "these known domain imports have been fixed — remove them from KNOWN_DOMAIN_IMPORTS: "
+        f"{resolved}"
+    )
 
 
 def test_layer_dependencies_have_no_new_violations() -> None:

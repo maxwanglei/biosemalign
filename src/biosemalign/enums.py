@@ -16,6 +16,7 @@ __all__ = [
     "EgressDataClass",
     "ErrorCategory",
     "LinkKind",
+    "MentionFidelity",
     "MentionMode",
     "ReadinessStatus",
     "RelationshipType",
@@ -50,6 +51,7 @@ class SourceType(StrEnum):
     STRUCTURED_FIELD = "structured_field"
     STRUCTURED_RECORD = "structured_record"
     STRUCTURED_BATCH = "structured_batch"
+    EXTRACTED_TERMS = "extracted_terms"
     UNSTRUCTURED_TEXT = "unstructured_text"
 
 
@@ -58,6 +60,15 @@ class MentionMode(StrEnum):
 
     USER_SPECIFIED = "user_specified"
     AUTOMATIC_DETECTION = "automatic_detection"
+
+
+class MentionFidelity(StrEnum):
+    """Whether the mention text appears verbatim in its originating text."""
+
+    VERBATIM = "verbatim"
+    NORMALIZED_MATCH = "normalized_match"
+    NOT_FOUND = "not_found"
+    UNKNOWN = "unknown"
 
 
 class SemanticType(StrEnum):

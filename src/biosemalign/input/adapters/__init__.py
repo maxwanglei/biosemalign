@@ -2,6 +2,7 @@
 
 from biosemalign.input.adapters.base import SourceAdapter, get_adapter, register_adapter
 from biosemalign.input.adapters.existing import ExistingCleanerAdapter
+from biosemalign.input.adapters.extracted import ExtractedTermsAdapter, compute_mention_fidelity
 from biosemalign.input.adapters.structured import (
     StructuredBatchAdapter,
     StructuredFieldAdapter,
@@ -11,10 +12,12 @@ from biosemalign.input.adapters.structured import (
 
 __all__ = [
     "ExistingCleanerAdapter",
+    "ExtractedTermsAdapter",
     "SourceAdapter",
     "StructuredBatchAdapter",
     "StructuredFieldAdapter",
     "StructuredRecordAdapter",
+    "compute_mention_fidelity",
     "get_adapter",
     "register_adapter",
     "register_default_adapters",

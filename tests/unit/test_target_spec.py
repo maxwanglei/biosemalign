@@ -11,6 +11,8 @@ from pydantic import ValidationError
 from tests.support import PRODUCT, make_pipeline
 
 from biosemalign import verify_artifact
+from biosemalign.domains.drug.tools.links import common as link_classes
+from biosemalign.domains.drug.tools.omop import RXNORM_CLASS_TO_TTY
 from biosemalign.enums import (
     Authority,
     ConceptStatus,
@@ -19,8 +21,6 @@ from biosemalign.enums import (
     SemanticLossKind,
 )
 from biosemalign.exceptions import ProfileError
-from biosemalign.knowledge.lexicon.links import common as link_classes
-from biosemalign.knowledge.lexicon.omop import RXNORM_CLASS_TO_TTY
 from biosemalign.profiles.loader import load_profile
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.schemas.knowledge import CandidateConcept, KnowledgePackage, KnowledgeStatement
@@ -237,8 +237,10 @@ def test_specs_are_validated() -> None:
 
 
 def test_specs_load_by_id_by_path_or_by_terminology(tmp_path: Path) -> None:
-    assert load_target_spec("rxnorm", terminology="RxNorm") is RXNORM
-    assert load_target_spec(None, terminology="rxnorm") is RXNORM
+    current_rxnorm = builtin_specs()["rxnorm"]
+    assert current_rxnorm == RXNORM
+    assert load_target_spec("rxnorm", terminology="RxNorm") is current_rxnorm
+    assert load_target_spec(None, terminology="rxnorm") is current_rxnorm
     custom = tmp_path / "custom.yaml"
     custom.write_text(yaml.safe_dump(_spec_payload(spec_id="custom", version="9")))
     assert load_target_spec(str(custom), terminology="RxNorm").label == "custom@9"
@@ -253,7 +255,7 @@ def test_specs_load_by_id_by_path_or_by_terminology(tmp_path: Path) -> None:
     # A terminology without a spec gets an empty one: nothing is reachable.
     empty = load_target_spec(None, terminology="SomethingElse")
     assert empty.granularities == {} and empty.predicate("ingredient") is None
-    assert spec_for_vocabulary("RxNorm Extension") is RXNORM
+    assert spec_for_vocabulary("RxNorm Extension") is current_rxnorm
     assert spec_for_vocabulary("MeSH") is None and spec_for_vocabulary(None) is None
 
 
@@ -269,23 +271,24 @@ def test_profiles_accept_a_target_section() -> None:
     payload["task"] = {"operation": "drug_normalization", "mapping_intent": "x"}
     payload["target"] = {
         "spec": "rxnorm",
-        "granularity": "precise_ingredient",
+        "level": "precise_ingredient",
         "source_terminologies": ["RxNorm Extension"],
     }
     profile = TaskProfile.model_validate(payload)
-    assert profile.task.target_terminology == "RxNorm"
-    assert profile.task.desired_granularity == "precise_ingredient"
-    assert profile.task.target_spec == "rxnorm"
-    assert profile.task.source_terminologies == ["RxNorm Extension"]
-    assert profile.target_spec() is RXNORM
+    assert profile.target.terminology == "RxNorm"
+    assert profile.target.level == "precise_ingredient"
+    assert profile.target.spec == "rxnorm"
+    assert profile.target.source_terminologies == ["RxNorm Extension"]
+    assert profile.target_spec() is builtin_specs()["rxnorm"]
+    assert profile.target_spec() == RXNORM
 
     agreeing = _profile_payload()
-    agreeing["target"] = {"terminology": "RxNorm", "granularity": "ingredient"}
-    assert TaskProfile.model_validate(agreeing).task.desired_granularity == "ingredient"
+    agreeing["target"] = {"terminology": "RxNorm", "level": "ingredient"}
+    assert TaskProfile.model_validate(agreeing).target.level == "ingredient"
     for target, message in [
-        ({"granularity": "precise_ingredient"}, "contradicts task.desired_granularity"),
-        ({"level": "x"}, "unknown fields"),
-        ("rxnorm", "must be a mapping"),
+        ({"granularity": "x", "terminology": "RxNorm"}, "Extra inputs"),
+        ({"level": "x"}, "Field required"),
+        ("rxnorm", "valid dictionary"),
     ]:
         payload = _profile_payload()
         payload["target"] = target
@@ -295,9 +298,10 @@ def test_profiles_accept_a_target_section() -> None:
 
 def test_a_target_without_a_spec_cannot_be_projected(tmp_path: Path) -> None:
     payload = _profile_payload()
-    payload["task"]["target_spec"] = None
+    payload["target"]["spec"] = None
     profile = TaskProfile.model_validate(payload)
-    assert profile.target_spec() is RXNORM
+    assert profile.target_spec() is builtin_specs()["rxnorm"]
+    assert profile.target_spec() == RXNORM
 
 
 # -- one source for the adjudicator and the validator ---------------------------------
@@ -311,7 +315,7 @@ def test_a_custom_spec_changes_what_is_reported_and_what_is_checked(tmp_path: Pa
     custom = tmp_path / "custom.yaml"
     custom.write_text(yaml.safe_dump(payload))
     profile_payload = _profile_payload()
-    profile_payload["task"]["target_spec"] = str(custom)
+    profile_payload["target"]["spec"] = str(custom)
     profile = TaskProfile.model_validate(profile_payload)
     with make_pipeline(tmp_path / "cache", profile=profile) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request(PRODUCT))
@@ -324,7 +328,7 @@ def test_a_custom_spec_changes_what_is_reported_and_what_is_checked(tmp_path: Pa
 
 def test_an_unknown_granularity_still_abstains(tmp_path: Path) -> None:
     payload = _profile_payload()
-    payload["task"]["desired_granularity"] = "clinical_drug"
+    payload["target"]["level"] = "clinical_drug"
     profile = TaskProfile.model_validate(payload)
     with make_pipeline(tmp_path / "cache", profile=profile) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request(PRODUCT))
@@ -379,7 +383,7 @@ def test_spec_driven_drug_rules_catch_dropped_components_and_salt_conflation(
 ) -> None:
     from tests.support import COMBINATION, SALT
 
-    from biosemalign.validation.drug_rules import validate_drug_semantics
+    from biosemalign.domains.drug.checks import validate_drug_semantics
 
     with make_pipeline(tmp_path / "cache") as pipeline:
         combination = pipeline.align_artifact(pipeline.make_request(COMBINATION))
@@ -401,9 +405,7 @@ def test_spec_driven_drug_rules_catch_dropped_components_and_salt_conflation(
     # At precise-ingredient level the combination check walks has_precise_ingredient,
     # which the combination concept lacks: nothing to drop.
     precise = profile.model_copy(
-        update={
-            "task": profile.task.model_copy(update={"desired_granularity": "precise_ingredient"})
-        }
+        update={"target": profile.target.model_copy(update={"level": "precise_ingredient"})}
     )
     codes = {
         f.code
@@ -429,3 +431,92 @@ def test_spec_driven_drug_rules_catch_dropped_components_and_salt_conflation(
     )
     findings = validate_drug_semantics(aliased, salt.knowledge_package, profile, sau=salt.sau)
     assert "SALT_ACTIVE_MOIETY_CONFLATION" in {f.code for f in findings}
+
+
+def test_identity_levels_multihop_ancestor_loss_and_object_class() -> None:
+    from biosemalign.modules.link.targets import targets_at
+
+    spec = builtin_specs()["toydisease"]
+    assert spec.has_granularity(None)
+    assert spec.has_granularity("Disease")
+    assert spec.max_hops_for("Group") == 2
+
+    d2 = CandidateConcept(
+        candidate_id="D2",
+        preferred_label="severe toy fever",
+        vocabulary="ToyDisease",
+        concept_class="Disease",
+        status=ConceptStatus.ACTIVE,
+        relationships=[
+            KnowledgeStatement(
+                subject_id="D2",
+                predicate="is_a",
+                object_id="D1",
+                object_label="toy fever",
+                object_class="Disease",
+                source_resource="ToyDisease",
+                authority=Authority.OFFICIAL_CODING_RELATIONSHIP,
+            ),
+            KnowledgeStatement(
+                subject_id="D2",
+                predicate="in_group",
+                object_id="G1",
+                object_label="toy fever disorders",
+                object_class="Group",
+                source_resource="ToyDisease",
+                authority=Authority.OFFICIAL_CODING_RELATIONSHIP,
+                direct=False,
+                extensions={"step_subject_id": "D1"},
+            ),
+        ],
+    )
+    identity_targets = targets_at(d2, spec, None)
+    assert [(r.concept_code, r.statement) for r in identity_targets] == [("D2", None)]
+    disease_targets = targets_at(d2, spec, "Disease")
+    assert [(r.concept_code, r.statement) for r in disease_targets] == [("D2", None)]
+    group_targets = targets_at(d2, spec, "Group")
+    assert [(r.concept_code, r.predicates) for r in group_targets] == [("G1", ("is_a", "in_group"))]
+
+    losses = spec.expected_losses(
+        d2,
+        selected_ids=["G1"],
+        target_label="toy fever disorders",
+        mention_text="severe toy fever",
+        context={},
+    )
+    assert [(loss.kind, loss.source_value) for loss in losses] == [
+        (SemanticLossKind.SPECIFICITY, "severe toy fever")
+    ]
+
+    # Object class wins when present, with legacy extensions["target_tty"] fallback.
+    pkg = KnowledgePackage(
+        sau_id="s",
+        candidates=[
+            CandidateConcept(
+                candidate_id="C1",
+                preferred_label="Compound",
+                vocabulary="Test",
+                status=ConceptStatus.ACTIVE,
+                relationships=[
+                    KnowledgeStatement(
+                        subject_id="C1",
+                        predicate="rel",
+                        object_id="O_NEW",
+                        object_class="NewClass",
+                        source_resource="Test",
+                        authority=Authority.OFFICIAL_CODING_RELATIONSHIP,
+                    ),
+                    KnowledgeStatement(
+                        subject_id="C1",
+                        predicate="rel",
+                        object_id="O_LEGACY",
+                        extensions={"target_tty": "LegacyClass"},
+                        source_resource="Test",
+                        authority=Authority.OFFICIAL_CODING_RELATIONSHIP,
+                    ),
+                ],
+            )
+        ],
+    )
+    assert pkg.evidence_for("Test", "O_NEW").concept_class == "NewClass"
+    assert pkg.evidence_for("Test", "O_LEGACY").concept_class == "LegacyClass"

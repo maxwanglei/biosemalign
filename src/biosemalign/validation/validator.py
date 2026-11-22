@@ -1,13 +1,9 @@
-"""Module 4: deterministic validation and integrity control.
+"""Deterministic validation and integrity control (§5.5, §8).
 
-The validator, not the adjudicator, holds final authority (§2). A second LLM
-critic is explicitly not used in the first implementation — deterministic rules
-are auditable, reproducible, and cannot themselves hallucinate.
-
-The terminology checks (unretrieved identifiers, concept status, relationship
-policy) are mandatory and always run first. Domain rules are validation
-operators configured by the profile and run after them; they can add findings
-but cannot remove the mandatory ones.
+The validator, not the resolver, holds final authority. The terminology checks
+(unretrieved identifiers, concept status, relationship policy) are mandatory
+and always run first. Domain checks are configured by the profile and run after
+them; they can add findings but cannot remove the mandatory ones.
 """
 
 from __future__ import annotations
@@ -25,42 +21,42 @@ from biosemalign.schemas.sau import SemanticAlignmentUnit
 from biosemalign.validation.terminology import validate_terminology
 
 if TYPE_CHECKING:
-    from biosemalign.ops.base import ValidateOp
+    from biosemalign.modules.base import Check
+    from biosemalign.modules.model import ModelService
 
 __all__ = ["VALIDATION_RULES_VERSION", "Validator"]
 
 #: Version of the mandatory terminology checks. The full ``rules_version``
-#: recorded on each result also names every configured validation operator.
+#: recorded on each result also names every configured check operator.
 VALIDATION_RULES_VERSION = "0.1.0"
 
 log = get_logger(__name__)
 
 
 class Validator:
-    """Runs terminology and semantic rules and returns a single verdict."""
+    """Runs terminology and check operators and returns a single verdict."""
 
     def __init__(
         self,
         profile: TaskProfile,
         *,
         provider: KnowledgeProvider | None = None,
-        rules: Sequence[ValidateOp] | None = None,
+        checks: Sequence[Check] | None = None,
+        model_service: ModelService | None = None,
     ) -> None:
         self.profile = profile
         self.provider = provider
-        if rules is None:
+        self.model_service = model_service
+        if checks is None:
             # Imported here so the operator registry, which imports this
-            # package's rule modules, is never needed to import the validator.
-            from biosemalign.ops import OpContext, build_op
+            # package's check modules, is never needed to import the validator.
+            from biosemalign.modules import OpContext, build
 
-            context = OpContext(profile=profile)
-            rules = [
-                build_op("validate", rule.op, context, rule.options)
-                for rule in profile.validation.rules
-            ]
-        self.rules: tuple[ValidateOp, ...] = tuple(rules)
+            context = OpContext(profile=profile, model_service=model_service)
+            checks = [build("check", check.op, context, check.options) for check in profile.checks]
+        self.checks: tuple[Check, ...] = tuple(checks)
         self.version = "+".join(
-            [VALIDATION_RULES_VERSION, *(f"{rule.op_id}@{rule.version}" for rule in self.rules)]
+            [VALIDATION_RULES_VERSION, *(f"{check.op_id}@{check.version}" for check in self.checks)]
         )
 
     def validate(
@@ -70,12 +66,40 @@ class Validator:
         sau: SemanticAlignmentUnit | None = None,
     ) -> ValidationResult:
         """Produce the verdict for one proposal (§8.3)."""
+        from biosemalign.exceptions import AdjudicationFailure
+        from biosemalign.kernel.guards import isolated_view
+
         findings: list[ValidationFinding] = []
         findings.extend(
-            validate_terminology(proposal, package, self.profile, provider=self.provider)
+            validate_terminology(proposal, package, self.profile, provider=self.provider, sau=sau)
         )
-        for rule in self.rules:
-            findings.extend(rule.validate(proposal, package, sau))
+        for check in self.checks:
+            check_sau = (
+                isolated_view(sau, "check", self.profile)
+                if sau is not None and check.uses_model
+                else (sau.model_copy(deep=True) if sau is not None else None)
+            )
+            try:
+                extra = check.check(
+                    proposal.model_copy(deep=True),
+                    package.model_copy(deep=True),
+                    check_sau,
+                )
+            except AdjudicationFailure:
+                if check.uses_model:
+                    findings.append(
+                        ValidationFinding(
+                            code="MODEL_CHECK_UNAVAILABLE",
+                            severity=Severity.WARNING,
+                            message=(
+                                f"model-backed check {check.op_id!r} returned an unusable reply; "
+                                "sending decision to human review"
+                            ),
+                        )
+                    )
+                    continue
+                raise
+            findings.extend(extra)
 
         status = self._verdict(proposal, findings)
 
@@ -94,7 +118,7 @@ class Validator:
         """Collapse findings into one status.
 
         Order matters: a single error rejects outright, and an explicit request
-        for review outranks a clean rule sweep — the adjudicator saw something
+        for review outranks a clean check sweep — the resolver saw something
         the rules do not encode.
         """
         if any(f.severity is Severity.ERROR for f in findings):

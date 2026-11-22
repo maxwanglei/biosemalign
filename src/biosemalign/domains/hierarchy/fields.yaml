@@ -1,0 +1,30 @@
+fields:
+  - name: severity
+    kind: attribute
+    use: [key, resolve, check]
+    required: false
+  - name: temporality
+    kind: attribute
+    use: [key, resolve, check]
+    required: false
+  - name: negation
+    kind: attribute
+    use: [key, resolve, check]
+    required: false
+  - name: certainty
+    kind: attribute
+    use: [key, resolve, check]
+    required: false
+  - name: anatomical_location
+    kind: attribute
+    use: [key, resolve, check]
+    required: false
+  - name: indication
+    kind: context
+    use: []
+    required: false
+    blinded: true
+  - name: sentence
+    kind: context
+    use: [resolve]
+    required: false

@@ -17,6 +17,8 @@ from tests.support import (
     make_pipeline,
 )
 
+from biosemalign.domains.drug.cleaners import ExtractStrengthCleaner
+from biosemalign.domains.drug.providers.matcher import RxNavMatcher
 from biosemalign.enums import (
     Authority,
     DecisionType,
@@ -25,21 +27,15 @@ from biosemalign.enums import (
     TierOutcome,
 )
 from biosemalign.exceptions import AdjudicationFailure, ConfigurationError, WorkflowViolation
-from biosemalign.ops import (
-    AdapterTransformOp,
-    AdjudicatorProposeOp,
-    CandidateSet,
+from biosemalign.kernel import Cascade, ParallelUnion, Tier
+from biosemalign.modules import CandidateSet, OpContext, available, build, register
+from biosemalign.modules.clean import (
+    AdapterCleaner,
     CleanerResult,
-    ExtractStrengthOp,
-    KnowledgePackageFuseOp,
-    OpContext,
-    RxNavRetrieveOp,
-    UnicodeNormalizeOp,
-    available_ops,
-    build_op,
-    register_op,
+    UnicodeNormalizeCleaner,
 )
-from biosemalign.pipelines.workflow import Cascade, ParallelUnion, Tier
+from biosemalign.modules.link.standard import StandardLinker
+from biosemalign.modules.resolve.deterministic import DeterministicResolver
 from biosemalign.profiles.loader import load_profile
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.schemas.artifact import AlignmentArtifact
@@ -48,21 +44,19 @@ from biosemalign.schemas.provenance import ModelProvenance
 from biosemalign.schemas.sau import SemanticAlignmentUnit
 
 
-def two_tier_profile(**exact_options: Any) -> TaskProfile:
+def two_tier_profile(**tier_options: Any) -> TaskProfile:
     payload = load_profile("faers_drug_normalization").model_dump(mode="json")
-    payload["workflow"] = {
-        "tiers": [
-            {
-                "name": "exact",
-                "retrievers": [{"op": "rxnav", "options": {"channels": ["normalized_lookup"]}}],
-                "proposer": {
-                    "op": "adjudicator",
-                    "options": {"pass_on": ["NO_VALID_MAPPING"], **exact_options},
-                },
-            },
-            {"name": "full"},
-        ]
-    }
+    payload["tiers"] = [
+        {
+            "name": "exact",
+            "match": [{"op": "drug.rxnav", "options": {"channels": ["normalized_lookup"]}}],
+            "link": {"op": "standard"},
+            "resolve": "rules",
+            "pass_on": ["NO_VALID_MAPPING"],
+            **tier_options,
+        },
+        {"name": "full", "match": ["drug.rxnav"]},
+    ]
     return TaskProfile.model_validate(payload)
 
 
@@ -71,32 +65,33 @@ def reload(profile: TaskProfile) -> TaskProfile:
     return TaskProfile.model_validate(profile.model_dump(mode="json"))
 
 
-class RecordingProposer:
-    """Wraps the default proposer and remembers what it was shown."""
+class RecordingResolver:
+    """Wraps a resolver and remembers what SAU it was shown."""
 
     op_id = "recording"
     version = "test"
+    uses_model = False
     requires_network = False
 
-    def __init__(self, inner: AdjudicatorProposeOp) -> None:
+    def __init__(self, inner: Any) -> None:
         self.inner = inner
         self.seen: list[SemanticAlignmentUnit] = []
 
-    def propose(self, sau: SemanticAlignmentUnit, package: KnowledgePackage) -> Any:
+    def resolve(self, sau: SemanticAlignmentUnit, package: KnowledgePackage) -> Any:
         self.seen.append(sau)
-        return self.inner.propose(sau, package)
+        return self.inner.resolve(sau, package)
 
     def provenance(self) -> ModelProvenance:
         return self.inner.provenance()
 
 
 def default_tier(context: OpContext, **overrides: Any) -> Tier:
-    assert context.knowledge is not None and context.adjudicator is not None
+    assert context.knowledge is not None
     fields: dict[str, Any] = {
         "name": "only",
-        "retrieval": RxNavRetrieveOp(context.knowledge.primary_provider(), context.profile),
-        "fuser": KnowledgePackageFuseOp(context.knowledge, context.profile),
-        "proposer": AdjudicatorProposeOp(context.adjudicator),
+        "match": RxNavMatcher(context.knowledge.primary_provider(), context.profile),
+        "linker": StandardLinker(context.knowledge, context.profile),
+        "resolver": context.resolver or DeterministicResolver(context.profile),
     }
     fields.update(overrides)
     return Tier(**fields)
@@ -112,14 +107,14 @@ def test_default_workflow_is_one_tier_and_records_its_resolution(
     assert provenance.workflow is not None
     assert [tier.name for tier in provenance.workflow.tiers] == ["default"]
     assert [op.op_id for op in provenance.workflow.tiers[0].operators] == [
-        "rxnav",
-        "knowledge_package",
-        "adjudicator:deterministic",
+        "drug.rxnav",
+        "standard",
+        "rules",
     ]
-    assert [op.op_id for op in provenance.workflow.validators] == ["drug_semantics"]
+    assert [op.op_id for op in provenance.workflow.validators] == ["drug.semantics"]
     assert provenance.resolution is not None
     assert provenance.resolution.resolved_by_tier == "default"
-    assert artifact.validation.rules_version == "0.1.0+drug_semantics@0.1.0"
+    assert artifact.validation.rules_version == "0.1.0+drug.semantics@0.1.0"
 
 
 def test_workflow_id_is_stable_and_changes_with_configuration(tmp_path: Path) -> None:
@@ -160,7 +155,7 @@ def test_cascade_escalates_misses_and_attributes_the_resolving_tier(tmp_path: Pa
 
 def test_exhausted_cascade_abstains_for_human_review(tmp_path: Path) -> None:
     profile = two_tier_profile()
-    profile.workflow.tiers[1].proposer.options = {"pass_on": ["NO_VALID_MAPPING"]}
+    profile.tiers[1].pass_on = [DecisionType.NO_VALID_MAPPING]
     with make_pipeline(tmp_path, profile=reload(profile)) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request(NO_MATCH, route="oral"))
         record = next(pipeline.align_batch_records([{"drug": NO_MATCH}], value_column="drug"))
@@ -176,29 +171,27 @@ def test_exhausted_cascade_abstains_for_human_review(tmp_path: Path) -> None:
     assert record.status == "success"
 
 
-def test_parallel_union_fuses_every_retriever(tmp_path: Path) -> None:
+def test_parallel_union_fuses_every_matcher(tmp_path: Path) -> None:
     def workflow(context: OpContext) -> Cascade:
         assert context.knowledge is not None
         provider = context.knowledge.primary_provider()
         union = ParallelUnion(
             [
-                RxNavRetrieveOp(
-                    provider, context.profile, channels=[RetrievalChannel.EXACT_LOOKUP]
-                ),
-                RxNavRetrieveOp(
+                RxNavMatcher(provider, context.profile, channels=[RetrievalChannel.EXACT_LOOKUP]),
+                RxNavMatcher(
                     provider,
                     context.profile,
                     channels=[RetrievalChannel.TERMINOLOGY_APPROXIMATE_CURRENT],
                 ),
             ]
         )
-        return Cascade([default_tier(context, retrieval=union)])
+        return Cascade([default_tier(context, match=union)])
 
     with make_pipeline(tmp_path, workflow=workflow) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request(PRODUCT))
     operators = artifact.decision.provenance.workflow.tiers[0].operators
-    retrievers = [op for op in operators if op.kind == "retrieve"]
-    assert [op.options["channels"] for op in retrievers] == [
+    matchers = [op for op in operators if op.kind == "match"]
+    assert [op.options["channels"] for op in matchers] == [
         ("exact_lookup",),
         ("terminology_approximate_current",),
     ]
@@ -223,20 +216,21 @@ def test_profile_cascade_matches_programmatic_cascade(tmp_path: Path) -> None:
 # -- kernel guarantees -------------------------------------------------------
 
 
-def test_proposer_cannot_return_a_decision(tmp_path: Path) -> None:
+def test_resolver_cannot_return_a_decision(tmp_path: Path) -> None:
     class Forger:
         op_id = "forger"
         version = "test"
+        uses_model = False
         requires_network = False
 
-        def propose(self, sau: SemanticAlignmentUnit, package: KnowledgePackage) -> Any:
+        def resolve(self, sau: SemanticAlignmentUnit, package: KnowledgePackage) -> Any:
             return {"decision": "MAPPED", "routing_status": "AUTO_ACCEPT"}
 
         def provenance(self) -> ModelProvenance:
             return ModelProvenance(backend="forger")
 
     with make_pipeline(
-        tmp_path, workflow=lambda context: Cascade([default_tier(context, proposer=Forger())])
+        tmp_path, workflow=lambda context: Cascade([default_tier(context, resolver=Forger())])
     ) as pipeline:
         with pytest.raises(WorkflowViolation, match="may only return"):
             pipeline.align_value(ALPHA)
@@ -245,18 +239,19 @@ def test_proposer_cannot_return_a_decision(tmp_path: Path) -> None:
     assert record.error_code == "WorkflowViolation"
 
 
-def test_kernel_strips_prohibited_predicates_a_custom_fuser_adds(tmp_path: Path) -> None:
-    class LeakyFuser:
+def test_kernel_strips_prohibited_predicates_a_custom_linker_adds(tmp_path: Path) -> None:
+    class LeakyLinker:
         op_id = "leaky"
         version = "test"
+        uses_model = False
 
-        def __init__(self, inner: KnowledgePackageFuseOp) -> None:
+        def __init__(self, inner: StandardLinker) -> None:
             self.inner = inner
 
-        def fuse(
+        def link(
             self, sau: SemanticAlignmentUnit, candidate_sets: Sequence[CandidateSet]
         ) -> KnowledgePackage:
-            package = self.inner.fuse(sau, candidate_sets)
+            package = self.inner.link(sau, candidate_sets)
             leak = KnowledgeStatement(
                 subject_id="1001",
                 predicate="has_adverse_effect",
@@ -270,8 +265,8 @@ def test_kernel_strips_prohibited_predicates_a_custom_fuser_adds(tmp_path: Path)
 
     def workflow(context: OpContext) -> Cascade:
         assert context.knowledge is not None
-        inner = KnowledgePackageFuseOp(context.knowledge, context.profile)
-        return Cascade([default_tier(context, fuser=LeakyFuser(inner))])
+        inner = StandardLinker(context.knowledge, context.profile)
+        return Cascade([default_tier(context, linker=LeakyLinker(inner))])
 
     with make_pipeline(tmp_path, workflow=workflow) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request(ALPHA))
@@ -282,31 +277,32 @@ def test_kernel_strips_prohibited_predicates_a_custom_fuser_adds(tmp_path: Path)
     assert artifact.decision.selected_concepts[0].concept_id == "1001"
 
 
-def test_transforms_cannot_rewrite_the_source_mention(tmp_path: Path) -> None:
+def test_cleaners_cannot_rewrite_the_source_mention(tmp_path: Path) -> None:
     class Rewriter:
         op_id = "rewriter"
         version = "test"
+        uses_model = False
 
-        def transform(self, sau: SemanticAlignmentUnit) -> SemanticAlignmentUnit:
+        def clean(self, sau: SemanticAlignmentUnit) -> SemanticAlignmentUnit:
             mention = sau.mention.model_copy(update={"text": "something else"})
             return sau.model_copy(update={"mention": mention})
 
     pipeline = make_pipeline(
         tmp_path,
-        workflow=lambda context: Cascade([default_tier(context, transforms=(Rewriter(),))]),
+        workflow=lambda context: Cascade([default_tier(context, cleaners=(Rewriter(),))]),
     )
     with pipeline, pytest.raises(WorkflowViolation, match="changed the source mention"):
         pipeline.align_value(ALPHA)
 
 
-def test_transforms_cannot_overwrite_asserted_attributes(tmp_path: Path) -> None:
-    cleaner = AdapterTransformOp(
+def test_cleaners_cannot_overwrite_asserted_attributes(tmp_path: Path) -> None:
+    cleaner = AdapterCleaner(
         lambda text: CleanerResult(canonical_text=text, slots={"route": "topical"}),
         op_id="cleaner",
         version="test",
     )
     with make_pipeline(
-        tmp_path, workflow=lambda context: Cascade([default_tier(context, transforms=(cleaner,))])
+        tmp_path, workflow=lambda context: Cascade([default_tier(context, cleaners=(cleaner,))])
     ) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request(ALPHA, route="oral"))
     # The cleaner's slot was ignored rather than overwriting what the source said.
@@ -315,14 +311,15 @@ def test_transforms_cannot_overwrite_asserted_attributes(tmp_path: Path) -> None
     class Overwriter:
         op_id = "overwriter"
         version = "test"
+        uses_model = False
 
-        def transform(self, sau: SemanticAlignmentUnit) -> SemanticAlignmentUnit:
+        def clean(self, sau: SemanticAlignmentUnit) -> SemanticAlignmentUnit:
             attributes = sau.attributes.model_copy(update={"route": "topical"})
             return sau.model_copy(update={"attributes": attributes})
 
     pipeline = make_pipeline(
         tmp_path / "overwrite",
-        workflow=lambda context: Cascade([default_tier(context, transforms=(Overwriter(),))]),
+        workflow=lambda context: Cascade([default_tier(context, cleaners=(Overwriter(),))]),
     )
     with pipeline, pytest.raises(WorkflowViolation, match="overwrote or removed"):
         pipeline.align_value(ALPHA, route="oral")
@@ -330,14 +327,14 @@ def test_transforms_cannot_overwrite_asserted_attributes(tmp_path: Path) -> None
 
 def test_extract_strength_moves_strength_into_a_slot(synthetic_pipeline: Any) -> None:
     sau = synthetic_pipeline.build_sau(synthetic_pipeline.make_request("ExampleAlpha 50 MG"))[0]
-    transformed = ExtractStrengthOp().transform(sau)
-    assert transformed.mention.text == "ExampleAlpha 50 MG"
-    assert transformed.mention.retrieval_text == "ExampleAlpha"
-    assert transformed.attributes.strength == "50 MG"
+    cleaned = ExtractStrengthCleaner().clean(sau)
+    assert cleaned.mention.text == "ExampleAlpha 50 MG"
+    assert cleaned.mention.retrieval_text == "ExampleAlpha"
+    assert cleaned.attributes.strength == "50 MG"
 
     bare = synthetic_pipeline.build_sau(synthetic_pipeline.make_request("50 MG"))[0]
-    assert ExtractStrengthOp().transform(bare) == bare
-    assert ExtractStrengthOp().transform(transformed).attributes.strength == "50 MG"
+    assert ExtractStrengthCleaner().clean(bare) == bare
+    assert ExtractStrengthCleaner().clean(cleaned).attributes.strength == "50 MG"
 
 
 #: "Example Alpha" in full-width letters with a no-break space, as PDF exports produce.
@@ -346,18 +343,18 @@ FULLWIDTH = "\uff25\uff58\uff41\uff4d\uff50\uff4c\uff45\u00a0Alpha"
 
 def test_unicode_normalize_canonicalizes_the_query_only(synthetic_pipeline: Any) -> None:
     sau = synthetic_pipeline.build_sau(synthetic_pipeline.make_request(FULLWIDTH))[0]
-    transformed = UnicodeNormalizeOp().transform(sau)
-    assert transformed.mention.retrieval_text == "Example Alpha"
-    assert transformed.mention.text == sau.mention.text
+    cleaned = UnicodeNormalizeCleaner().clean(sau)
+    assert cleaned.mention.retrieval_text == "Example Alpha"
+    assert cleaned.mention.text == sau.mention.text
     plain = synthetic_pipeline.build_sau(synthetic_pipeline.make_request(ALPHA))[0]
-    assert UnicodeNormalizeOp().transform(plain) == plain
+    assert UnicodeNormalizeCleaner().clean(plain) == plain
 
 
-def test_transformed_query_reaches_retrieval_and_slot_reaches_the_decision(
+def test_cleaned_query_reaches_matching_and_slot_reaches_the_decision(
     tmp_path: Path,
 ) -> None:
     def workflow(context: OpContext) -> Cascade:
-        return Cascade([default_tier(context, transforms=(ExtractStrengthOp(),))])
+        return Cascade([default_tier(context, cleaners=(ExtractStrengthCleaner(),))])
 
     with make_pipeline(tmp_path, workflow=workflow) as pipeline:
         artifact = pipeline.align_artifact(pipeline.make_request("ExampleAlpha 50 MG"))
@@ -366,16 +363,18 @@ def test_transformed_query_reaches_retrieval_and_slot_reaches_the_decision(
     assert artifact.decision.selected_concepts[0].concept_id == "1001"
 
 
-def test_blinded_context_is_withheld_from_proposers(tmp_path: Path) -> None:
+def test_blinded_context_is_withheld_from_resolvers(tmp_path: Path) -> None:
     profile = load_profile("faers_drug_normalization")
-    profile.knowledge.blinded_context_fields = ["indication"]
-    recorder: list[RecordingProposer] = []
+    profile.context.fields = [
+        f.model_copy(update={"blinded": True}) if f.name == "indication" else f
+        for f in profile.context.fields
+    ]
+    recorder: list[RecordingResolver] = []
 
     def workflow(context: OpContext) -> Cascade:
-        assert context.adjudicator is not None
-        proposer = RecordingProposer(AdjudicatorProposeOp(context.adjudicator))
-        recorder.append(proposer)
-        return Cascade([default_tier(context, proposer=proposer)])
+        resolver = RecordingResolver(DeterministicResolver(context.profile))
+        recorder.append(resolver)
+        return Cascade([default_tier(context, resolver=resolver)])
 
     with make_pipeline(tmp_path, profile=reload(profile), workflow=workflow) as pipeline:
         artifact = pipeline.align_artifact(
@@ -392,7 +391,9 @@ def test_blinded_context_is_withheld_from_proposers(tmp_path: Path) -> None:
 def test_only_unmirrored_context_can_be_blinded() -> None:
     profile = load_profile("faers_drug_normalization")
     payload = profile.model_dump(mode="json")
-    payload["knowledge"]["blinded_context_fields"] = ["route"]
+    for field in payload["context"]["fields"]:
+        if field["name"] == "route":
+            field["blinded"] = True
     with pytest.raises(ValidationError, match="cannot be blinded"):
         TaskProfile.model_validate(payload)
 
@@ -401,27 +402,27 @@ def test_only_unmirrored_context_can_be_blinded() -> None:
 
 
 def test_frozen_mode_rejects_operators_that_require_the_network(tmp_path: Path) -> None:
-    class LiveRetriever:
+    class LiveMatcher:
         op_id = "live"
         version = "test"
+        uses_model = False
         requires_network = True
 
-        def retrieve(self, sau: SemanticAlignmentUnit) -> CandidateSet:
+        def match(self, sau: SemanticAlignmentUnit) -> CandidateSet:
             raise AssertionError("never reached")
 
     with pytest.raises(ConfigurationError, match="FROZEN mode forbids"):
         make_pipeline(
             tmp_path,
-            workflow=lambda context: Cascade([default_tier(context, retrieval=LiveRetriever())]),
+            workflow=lambda context: Cascade([default_tier(context, match=LiveMatcher())]),
         )
 
 
-def test_proposer_candidate_limit_is_checked_at_startup(tmp_path: Path) -> None:
+def test_resolver_candidate_limit_is_checked_at_startup(tmp_path: Path) -> None:
     def workflow(context: OpContext) -> Cascade:
-        assert context.adjudicator is not None
-        proposer = AdjudicatorProposeOp(context.adjudicator)
-        proposer.max_candidates = 5  # type: ignore[attr-defined]
-        return Cascade([default_tier(context, proposer=proposer)])
+        resolver = DeterministicResolver(context.profile)
+        resolver.max_candidates = 5  # type: ignore[attr-defined]
+        return Cascade([default_tier(context, resolver=resolver)])
 
     with pytest.raises(ConfigurationError, match="accepts at most 5 candidates"):
         make_pipeline(tmp_path, workflow=workflow)
@@ -430,10 +431,10 @@ def test_proposer_candidate_limit_is_checked_at_startup(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("section", "value", "message"),
     [
-        ("retrievers", [{"op": "nonexistent"}], "no retrieve operator named"),
-        ("retrievers", [{"op": "rxnav", "options": {"chanels": []}}], "invalid options"),
-        ("proposer", {"op": "adjudicator", "options": {"pass_on": ["NOT_A_DECISION"]}}, "invalid"),
-        ("fuser", {"op": "knowledge_package", "options": {"x": 1}}, "takes no options"),
+        ("match", [{"op": "nonexistent"}], "no match operator named"),
+        ("match", [{"op": "drug.rxnav", "options": {"unknown_option": []}}], "invalid options"),
+        ("link", {"op": "standard", "options": {"merge": "invalid"}}, "invalid options"),
+        ("clean", [{"op": "unicode_normalize", "options": {"x": 1}}], "takes no options"),
     ],
 )
 def test_misconfigured_operators_fail_at_construction(
@@ -441,17 +442,20 @@ def test_misconfigured_operators_fail_at_construction(
 ) -> None:
     profile = load_profile("faers_drug_normalization")
     payload = profile.model_dump(mode="json")
-    payload["workflow"] = {"tiers": [{"name": "only", section: value}]}
+    tier: dict[str, Any] = {"name": "only", section: value}
+    if section != "match":
+        tier["match"] = [{"op": "drug.rxnav"}]
+    payload["tiers"] = [tier]
     with pytest.raises(ConfigurationError, match=message):
         make_pipeline(tmp_path, profile=TaskProfile.model_validate(payload))
 
 
 def test_workflow_profiles_reject_duplicate_and_empty_tiers() -> None:
     payload = load_profile("faers_drug_normalization").model_dump(mode="json")
-    payload["workflow"] = {"tiers": [{"name": "a"}, {"name": "a"}]}
+    payload["tiers"] = [{"name": "a"}, {"name": "a"}]
     with pytest.raises(ValidationError, match="unique"):
         TaskProfile.model_validate(payload)
-    payload["workflow"] = {"tiers": []}
+    payload["tiers"] = []
     with pytest.raises(ValidationError):
         TaskProfile.model_validate(payload)
 
@@ -459,27 +463,27 @@ def test_workflow_profiles_reject_duplicate_and_empty_tiers() -> None:
 def test_combinators_validate_their_operators(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="at least one tier"):
         Cascade([])
-    with pytest.raises(ConfigurationError, match="at least one retriever"):
+    with pytest.raises(ConfigurationError, match="at least one matcher"):
         ParallelUnion([])
     with make_pipeline(tmp_path) as pipeline:
         tier = pipeline.workflow.tiers[0]
         with pytest.raises(ConfigurationError, match="does not implement"):
-            Tier(name="bad", retrieval=tier.retrieval, fuser=tier.fuser, proposer=object())  # type: ignore[arg-type]
+            Tier(name="bad", match=tier.match, linker=tier.linker, resolver=object())  # type: ignore[arg-type]
         with pytest.raises(ConfigurationError, match="unique"):
             Cascade([tier, tier])
 
 
-def test_validation_rules_are_configurable_but_core_checks_remain(tmp_path: Path) -> None:
+def test_checks_are_configurable_but_core_checks_remain(tmp_path: Path) -> None:
     profile = load_profile("faers_drug_normalization")
-    profile.validation.rules = []
+    profile.checks = []
     with make_pipeline(tmp_path, profile=reload(profile)) as pipeline:
         assert pipeline.validator.version == "0.1.0"
         artifact = pipeline.align_artifact(pipeline.make_request(ALPHA))
     assert artifact.decision.provenance.workflow.validators == ()
 
     payload = load_profile("faers_drug_normalization").model_dump(mode="json")
-    payload["validation"]["rules"] = ["no_such_rule"]
-    with pytest.raises(ConfigurationError, match="no validate operator named"):
+    payload["checks"] = ["no_such_check"]
+    with pytest.raises(ConfigurationError, match="no check operator named"):
         make_pipeline(tmp_path / "unknown", profile=TaskProfile.model_validate(payload))
 
 
@@ -487,23 +491,24 @@ def test_registry_accepts_third_party_operators_and_checks_protocols() -> None:
     class Shouter:
         op_id = "shout"
         version = "test"
+        uses_model = False
 
-        def transform(self, sau: SemanticAlignmentUnit) -> SemanticAlignmentUnit:
+        def clean(self, sau: SemanticAlignmentUnit) -> SemanticAlignmentUnit:
             return sau
 
-    register_op("transform", "test_shout", lambda context, options: Shouter())
-    register_op("retrieve", "test_not_a_retriever", lambda context, options: Shouter())
+    register("clean", "test_shout", lambda context, options: Shouter())
+    register("match", "test_not_a_matcher", lambda context, options: Shouter())
     context = OpContext(profile=load_profile("faers_drug_normalization"))
-    assert "test_shout" in available_ops("transform")
-    assert isinstance(build_op("transform", "test_shout", context), Shouter)
-    with pytest.raises(ConfigurationError, match="does not implement the RetrieveOp"):
-        build_op("retrieve", "test_not_a_retriever", context)
+    assert "test_shout" in available("clean")
+    assert isinstance(build("clean", "test_shout", context), Shouter)
+    with pytest.raises(ConfigurationError, match="does not implement the Matcher"):
+        build("match", "test_not_a_matcher", context)
     with pytest.raises(ConfigurationError, match="needs the pipeline's knowledge router"):
-        build_op("retrieve", "rxnav", context)
-    with pytest.raises(ConfigurationError, match="needs the pipeline's adjudicator"):
-        build_op("propose", "adjudicator", context)
+        build("match", "drug.rxnav", context)
+    with pytest.raises(ConfigurationError, match="needs the pipeline's knowledge router"):
+        build("match", "exact", context)
     with pytest.raises(ValueError, match="unknown operator kind"):
-        register_op("bogus", "x", lambda context, options: Shouter())  # type: ignore[arg-type]
+        register("bogus", "x", lambda context, options: Shouter())  # type: ignore[arg-type]
 
 
 def test_pass_on_review_request_escalates(tmp_path: Path) -> None:
@@ -516,6 +521,41 @@ def test_pass_on_review_request_escalates(tmp_path: Path) -> None:
         ("full", TierOutcome.RESOLVED, None),
     ]
     assert artifact.decision.routing_status is RoutingStatus.HUMAN_REVIEW
+
+
+def test_tier_escalation_works_for_any_resolver_and_changes_workflow_id(tmp_path: Path) -> None:
+    from biosemalign.modules.resolve.mock_backend import MockResolver
+
+    base = two_tier_profile()
+    escalating = two_tier_profile(pass_on_review_request=True)
+    with (
+        make_pipeline(tmp_path / "a", profile=base) as pa,
+        make_pipeline(tmp_path / "b", profile=escalating) as pb,
+    ):
+        assert (
+            pa.kernel.workflow_provenance.workflow_id != pb.kernel.workflow_provenance.workflow_id
+        )
+
+    class _NoPassMock(MockResolver):
+        pass
+
+    with make_pipeline(
+        tmp_path / "custom",
+        workflow=lambda context: Cascade(
+            [
+                default_tier(
+                    context, name="first", resolver=_NoPassMock(), pass_on=[DecisionType.MAPPED]
+                ),
+                default_tier(context, name="second"),
+            ]
+        ),
+    ) as custom:
+        artifact = custom.align_artifact(custom.make_request(ALPHA))
+    attempts = artifact.decision.provenance.resolution.attempts
+    assert [(a.tier, a.outcome, a.reason) for a in attempts] == [
+        ("first", TierOutcome.PASSED, "decision:MAPPED"),
+        ("second", TierOutcome.RESOLVED, None),
+    ]
 
 
 # -- artifact self-verification ---------------------------------------------
@@ -599,37 +639,40 @@ def test_cached_packages_are_reused_per_tier(tmp_path: Path) -> None:
 
 
 def test_kernel_rejects_operators_that_break_identity_or_type(tmp_path: Path) -> None:
-    class Misaddressed:
-        op_id = "misaddressed"
+    class LeakyLinker:
+        op_id = "leaky"
         version = "test"
+        uses_model = False
 
-        def __init__(self, inner: KnowledgePackageFuseOp) -> None:
+        def __init__(self, inner: StandardLinker) -> None:
             self.inner = inner
 
-        def fuse(
+        def link(
             self, sau: SemanticAlignmentUnit, candidate_sets: Sequence[CandidateSet]
         ) -> KnowledgePackage:
-            return self.inner.fuse(sau, candidate_sets).model_copy(update={"sau_id": "other"})
+            package = self.inner.link(sau, candidate_sets)
+            return package.model_copy(update={"sau_id": "other"})
 
     class NotAnSAU:
         op_id = "not_an_sau"
         version = "test"
+        uses_model = False
 
-        def transform(self, sau: SemanticAlignmentUnit) -> Any:
+        def clean(self, sau: SemanticAlignmentUnit) -> Any:
             return {"mention": "text"}
 
     def misaddressed(context: OpContext) -> Cascade:
         assert context.knowledge is not None
-        inner = KnowledgePackageFuseOp(context.knowledge, context.profile)
-        return Cascade([default_tier(context, fuser=Misaddressed(inner))])
+        inner = StandardLinker(context.knowledge, context.profile)
+        return Cascade([default_tier(context, linker=LeakyLinker(inner))])
 
-    pipeline = make_pipeline(tmp_path / "fuser", workflow=misaddressed)
+    pipeline = make_pipeline(tmp_path / "linker", workflow=misaddressed)
     with pipeline, pytest.raises(WorkflowViolation, match="package for a different SAU"):
         pipeline.align_value(ALPHA)
 
     pipeline = make_pipeline(
-        tmp_path / "transform",
-        workflow=lambda context: Cascade([default_tier(context, transforms=(NotAnSAU(),))]),
+        tmp_path / "clean",
+        workflow=lambda context: Cascade([default_tier(context, cleaners=(NotAnSAU(),))]),
     )
     with pipeline, pytest.raises(WorkflowViolation, match="not an SAU"):
         pipeline.align_value(ALPHA)
@@ -640,8 +683,8 @@ def test_kernel_finalize_requires_matching_package_identity(
 ) -> None:
     run = synthetic_pipeline.new_run()
     sau = synthetic_pipeline.build_sau(synthetic_pipeline.make_request(ALPHA), run)[0]
-    package = synthetic_pipeline.retrieve_knowledge(sau)
-    proposal = synthetic_pipeline.adjudicate(sau, package)
+    package = synthetic_pipeline.build_package(sau)
+    proposal = synthetic_pipeline.resolve(sau, package)
     with pytest.raises(ValueError, match="identity does not match"):
         synthetic_pipeline.kernel.finalize(
             sau=sau,
@@ -655,20 +698,21 @@ def test_kernel_finalize_requires_matching_package_identity(
 
 def test_exhausted_cascade_requires_a_representable_abstention(tmp_path: Path) -> None:
     profile = two_tier_profile()
-    profile.workflow.tiers[1].proposer.options = {"pass_on": ["NO_VALID_MAPPING"]}
-    profile.adjudication.relation_types = [
+    profile.tiers[1].pass_on = [DecisionType.NO_VALID_MAPPING]
+    profile.task.relation_types = [
         relation
-        for relation in profile.adjudication.relation_types
+        for relation in profile.task.relation_types
         if relation.value != "UNSUPPORTED_MAPPING"
     ]
 
     class AlwaysPass:
         op_id = "always_pass"
         version = "test"
+        uses_model = False
         requires_network = False
 
-        def propose(self, sau: SemanticAlignmentUnit, package: KnowledgePackage) -> Any:
-            from biosemalign.ops import PassToNext
+        def resolve(self, sau: SemanticAlignmentUnit, package: KnowledgePackage) -> Any:
+            from biosemalign.modules import PassToNext
 
             return PassToNext("no opinion")
 
@@ -678,7 +722,7 @@ def test_exhausted_cascade_requires_a_representable_abstention(tmp_path: Path) -
     pipeline = make_pipeline(
         tmp_path,
         profile=reload(profile),
-        workflow=lambda context: Cascade([default_tier(context, proposer=AlwaysPass())]),
+        workflow=lambda context: Cascade([default_tier(context, resolver=AlwaysPass())]),
     )
     with pipeline, pytest.raises(AdjudicationFailure, match="cannot represent the abstention"):
         pipeline.align_value(ALPHA)
@@ -691,8 +735,8 @@ def test_pipeline_rejects_a_cascade_bound_to_another_pipeline(tmp_path: Path) ->
         make_pipeline(tmp_path / "prebuilt", workflow=cascade)
 
 
-def test_adapter_transform_fills_only_known_empty_slots(synthetic_pipeline: Any) -> None:
-    cleaner = AdapterTransformOp(
+def test_adapter_cleaner_fills_only_known_empty_slots(synthetic_pipeline: Any) -> None:
+    cleaner = AdapterCleaner(
         lambda text: CleanerResult(
             canonical_text="  ExampleAlpha  ",
             slots={"strength": "5 MG", "not_a_slot": "x", "extensions": "x"},
@@ -701,19 +745,19 @@ def test_adapter_transform_fills_only_known_empty_slots(synthetic_pipeline: Any)
         version="test",
     )
     sau = synthetic_pipeline.build_sau(synthetic_pipeline.make_request("EXAMPLEALPHA 5MG"))[0]
-    transformed = cleaner.transform(sau)
-    assert transformed.mention.retrieval_text == "ExampleAlpha"
-    assert transformed.attributes.strength == "5 MG"
-    assert transformed.attributes.extensions == {}
+    cleaned = cleaner.clean(sau)
+    assert cleaned.mention.retrieval_text == "ExampleAlpha"
+    assert cleaned.attributes.strength == "5 MG"
+    assert cleaned.attributes.extensions == {}
 
 
 def test_package_cache_is_bounded(synthetic_pipeline: Any) -> None:
-    from biosemalign.pipelines.kernel import PackageCache
+    from biosemalign.kernel import PackageCache
 
     cache = PackageCache(maximum=1)
     first = synthetic_pipeline.build_sau(synthetic_pipeline.make_request(ALPHA))[0]
     second = synthetic_pipeline.build_sau(synthetic_pipeline.make_request(PRODUCT))[0]
-    cache.put("t", first, synthetic_pipeline.retrieve_knowledge(first))
-    cache.put("t", second, synthetic_pipeline.retrieve_knowledge(second))
+    cache.put("t", first, synthetic_pipeline.build_package(first))
+    cache.put("t", second, synthetic_pipeline.build_package(second))
     assert cache.get("t", first) is None
     assert cache.get("t", second) is not None

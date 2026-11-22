@@ -15,12 +15,13 @@ from typing import Annotated, Any
 import typer
 
 from biosemalign._version import __version__
+from biosemalign.api import BatchInputError, BioSemAlign
 from biosemalign.enums import ResourceMode
 from biosemalign.evaluation.metrics import EvaluationPrediction
 from biosemalign.exceptions import BioSemAlignError
 from biosemalign.logging import configure_logging
-from biosemalign.pipelines.base import BatchInputError, BioSemAlign
 from biosemalign.profiles.loader import available_profiles, load_profile
+from biosemalign.profiles.migrate import migrate_profile_yaml
 from biosemalign.run_manifest import (
     build_run_manifest,
     code_tree_sha256,
@@ -75,9 +76,11 @@ def version() -> None:
     typer.echo(f"biosemalign {__version__} (core schema {SCHEMA_VERSION})")
 
 
-@app.command("profiles")
-def list_profiles() -> None:
-    """List discoverable task profiles."""
+profiles_app = typer.Typer(help="List and migrate task profiles.")
+app.add_typer(profiles_app, name="profiles")
+
+
+def _echo_profiles() -> None:
     names = available_profiles()
     if not names:
         typer.echo("no profiles found")
@@ -86,9 +89,39 @@ def list_profiles() -> None:
         profile = load_profile(name)
         typer.echo(
             f"{name}  v{profile.profile_version}  "
-            f"{profile.task.operation} -> {profile.task.target_terminology}"
-            f" ({profile.task.desired_granularity or 'any granularity'})"
+            f"{profile.task.operation} -> {profile.target.terminology}"
+            f" ({profile.target.level or 'any level'})"
         )
+
+
+@profiles_app.callback(invoke_without_command=True)
+def list_profiles(ctx: typer.Context) -> None:
+    """List discoverable task profiles."""
+    if ctx.invoked_subcommand is not None:
+        return
+    _echo_profiles()
+
+
+@profiles_app.command("list")
+def list_profiles_cmd() -> None:
+    """List discoverable task profiles."""
+    _echo_profiles()
+
+
+@profiles_app.command("migrate")
+def migrate_profile_cmd(
+    path: Annotated[Path, typer.Argument(help="Schema 1 profile YAML file to migrate.")],
+) -> None:
+    """Convert a Schema 1 task profile to Schema 2 YAML on stdout."""
+    import yaml
+
+    try:
+        text = path.read_text(encoding="utf-8")
+        converted = migrate_profile_yaml(text)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        typer.secho(f"cannot migrate {path}: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(converted, nl=False)
 
 
 @app.command("align-text")
@@ -433,9 +466,10 @@ def inspect(
 ) -> None:
     """Run one value through the pipeline and explain each stage."""
     with _pipeline(profile, mode, cache_dir) as pipeline:
-        run = pipeline.new_run()
-        request = pipeline.make_request(text)
-        sau = pipeline.build_sau(request, run)[0]
+        artifact = pipeline.align_artifact(pipeline.make_request(text))
+        sau = artifact.sau
+        package = artifact.knowledge_package
+        decision = artifact.decision
 
         typer.secho(f"\nSAU {sau.sau_id}", bold=True)
         typer.echo(f"  mention:   {sau.mention.text!r}")
@@ -445,7 +479,6 @@ def inspect(
             for warning in sau.readiness.warnings:
                 typer.echo(f"    ! {warning}")
 
-        package = pipeline.retrieve_knowledge(sau)
         typer.secho(f"\nCandidates ({len(package.candidates)})", bold=True)
         for index, candidate in enumerate(package.candidates, start=1):
             channels = ", ".join(sorted(c.value for c in candidate.channels))
@@ -468,12 +501,6 @@ def inspect(
             typer.secho("\nCoding policies", bold=True)
             for policy in package.coding_policies:
                 typer.echo(f"  [{policy.policy_id}] {policy.rule}")
-
-        proposal = pipeline.adjudicate(sau, package)
-        validation = pipeline.validate(proposal, package, sau)
-        decision = pipeline.route(
-            sau=sau, package=package, proposal=proposal, validation=validation, run=run
-        )
 
         typer.secho("\nDecision", bold=True)
         typer.echo(f"  outcome:      {decision.decision.value}")
@@ -808,8 +835,10 @@ def lexicon_link(
 ) -> None:
     """Derive missing links (ingredients, cross-vocabulary keys) as build overlays."""
     from biosemalign.exceptions import LexiconError
+    from biosemalign.knowledge.lexicon import get_lexicon_tool
     from biosemalign.knowledge.lexicon.build import load_declaration
-    from biosemalign.knowledge.lexicon.links import LINK_OVERLAYS, derive_links
+
+    derive_links = get_lexicon_tool("link")
 
     try:
         report = derive_links(
@@ -838,7 +867,8 @@ def lexicon_link(
             )
     for name, count in report.overlay_rows.items():
         typer.echo(f"  {name}/: {count} new rows")
-    sources = " ".join(f"--source {output / name}" for name in LINK_OVERLAYS)
+    link_overlays = ("internal", "external_id", "external_derived")
+    sources = " ".join(f"--source {output / name}" for name in link_overlays)
     typer.echo(f"report: {output / 'link_report.md'}")
     typer.echo(
         f"next: biosemalign lexicon build --source {base} {sources} "
@@ -942,7 +972,9 @@ def lexicon_import_omop(
     import yaml
 
     from biosemalign.exceptions import LexiconError
-    from biosemalign.knowledge.lexicon.omop import import_omop
+    from biosemalign.knowledge.lexicon import get_lexicon_tool
+
+    import_omop = get_lexicon_tool("import_omop")
 
     mapping = (
         yaml.safe_load(relationship_map.read_text(encoding="utf-8"))
@@ -994,22 +1026,35 @@ def code(
         typer.Option("--vocabulary", help="Code against this vocabulary only (repeatable)."),
     ] = None,
     target: Annotated[
-        str, typer.Option(help="Terminology whose ingredients codes are annotated with.")
-    ] = "RxNorm",
+        str | None,
+        typer.Option(
+            help="Terminology whose ingredients codes are annotated with (default: profile target or RxNorm)."
+        ),
+    ] = None,
+    profile: Annotated[
+        str | None,
+        typer.Option(
+            "--profile",
+            "-p",
+            help="Task profile providing target, vocabularies, and cleaning passes.",
+        ),
+    ] = None,
     sha256: Annotated[
         str | None, typer.Option("--sha256", help="Require this pinned bundle digest.")
     ] = None,
     overwrite: Annotated[bool, typer.Option(help="Replace existing outputs.")] = False,
 ) -> None:
-    """Step 1a: attach every exact dictionary code to every term, in bulk.
+    """Step 1a: attach every dictionary code to every term, in bulk.
 
     Every code is kept — all vocabularies, linked to the target or not — and
-    terms with no exact match are listed for the next step. Nothing is decided.
+    terms left uncoded after exact and cleaning passes are listed for the next step.
     """
-    from biosemalign.coding import code_terms
-    from biosemalign.exceptions import LexiconError
+    from biosemalign.exceptions import ConfigurationError, LexiconError
+    from biosemalign.profiles.loader import load_profile
+    from biosemalign.workflows.coding import code_terms
 
     try:
+        task_profile = load_profile(profile) if profile is not None else None
         report = code_terms(
             bundle,
             input_path,
@@ -1020,16 +1065,193 @@ def code(
             target=target,
             expected_sha256=sha256,
             overwrite=overwrite,
+            profile=task_profile,
         )
-    except LexiconError as exc:
+    except (ConfigurationError, LexiconError) as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2) from exc
+    resolved_target = (
+        report.target
+        or target
+        or (task_profile.target.terminology if task_profile is not None else "target")
+    )
+    cleaned_note = (
+        f" ({report.coded_terms_cleaned} after cleaning)" if report.coded_terms_cleaned else ""
+    )
     typer.echo(
-        f"coded {report.coded_terms}/{report.terms} distinct terms "
+        f"coded {report.coded_terms}/{report.terms} distinct terms{cleaned_note} "
         f"({report.coded_rows}/{report.rows - report.blank_rows} rows); "
-        f"{report.terms_reaching_target} terms have a code reaching a {target} ingredient"
+        f"{report.terms_reaching_target} terms have a code reaching a "
+        f"{resolved_target} {report.granularity or 'concept'}"
     )
     typer.echo(f"outputs and report: {output}")
+
+
+# -- phenotyping -----------------------------------------------------------
+
+phenotype_app = typer.Typer(
+    help="Propose, review, export, and verify phenotype concept sets.", no_args_is_help=True
+)
+app.add_typer(phenotype_app, name="phenotype")
+
+
+@phenotype_app.command("propose")
+def phenotype_propose(
+    profile: ProfileOption,
+    text: Annotated[str, typer.Option("--text", "-t", help="Phenotype idea to expand into a set.")],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Output ConceptSetArtifact JSON.")],
+    mode: ModeOption = None,
+    cache_dir: CacheOption = None,
+) -> None:
+    """Propose a phenotype concept set awaiting human review and approval."""
+    settings = get_settings()
+    with _pipeline(profile, mode, cache_dir) as pipeline:
+        try:
+            artifact = pipeline.propose_concept_set(pipeline.make_request(text))
+        except BioSemAlignError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2) from exc
+    with atomic_text_writer(
+        output, dir_mode=settings.output_dir_mode, file_mode=settings.output_file_mode
+    ) as handle:
+        handle.write(artifact.model_dump_json(indent=2) + "\n")
+    typer.echo(
+        f"proposed {len(artifact.decision.members)} member(s); "
+        f"routing={artifact.decision.routing_status.value}; wrote {output}"
+    )
+
+
+@phenotype_app.command("review")
+def phenotype_review(
+    profile: ProfileOption,
+    artifact_path: Annotated[
+        Path, typer.Option("--artifact", "-a", help="Proposed ConceptSetArtifact JSON.")
+    ],
+    review_path: Annotated[
+        Path, typer.Option("--review", "-r", help="ConceptSetReview JSON with reviewer actions.")
+    ],
+    output: Annotated[
+        Path, typer.Option("--output", "-o", help="Reviewed ConceptSetArtifact JSON.")
+    ],
+    mode: ModeOption = None,
+    cache_dir: CacheOption = None,
+) -> None:
+    """Apply and record a human reviewer's approval/edits on a concept-set artifact."""
+    from biosemalign.schemas.phenotyping import ConceptSetArtifact, ConceptSetReview
+    from biosemalign.workflows.phenotyping import apply_concept_set_review
+
+    settings = get_settings()
+    try:
+        artifact = ConceptSetArtifact.model_validate_json(artifact_path.read_text(encoding="utf-8"))
+        review = ConceptSetReview.model_validate_json(review_path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        typer.secho(f"invalid phenotype input: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+
+    with _pipeline(profile, mode, cache_dir) as pipeline:
+        try:
+            reviewed = apply_concept_set_review(artifact, review, knowledge=pipeline.knowledge)
+        except (BioSemAlignError, ValueError) as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2) from exc
+
+    with atomic_text_writer(
+        output, dir_mode=settings.output_dir_mode, file_mode=settings.output_file_mode
+    ) as handle:
+        handle.write(reviewed.model_dump_json(indent=2) + "\n")
+    assert reviewed.review is not None
+    typer.echo(
+        f"recorded review {reviewed.review.review_id} (approved={reviewed.review.approved}); "
+        f"{len(reviewed.approved_members)} approved member(s); wrote {output}"
+    )
+
+
+@phenotype_app.command("export")
+def phenotype_export(
+    artifact_path: Annotated[
+        Path, typer.Option("--artifact", "-a", help="Reviewed ConceptSetArtifact JSON.")
+    ],
+    name: Annotated[str, typer.Option("--name", "-n", help="Exported concept set name.")],
+    output: Annotated[Path, typer.Option("--output", "-o", help="Output ConceptSet JSON.")],
+    version: Annotated[
+        str, typer.Option("--version", help="Exported concept set version.")
+    ] = "1.0.0",
+    scope: Annotated[
+        str | None, typer.Option("--scope", help="Filter to 'narrow' or 'broad' (default all).")
+    ] = None,
+) -> None:
+    """Export an approved ConceptSet (refuses unapproved artifacts per G8)."""
+    from biosemalign.schemas.phenotyping import ConceptSetArtifact, ConceptSetScope
+    from biosemalign.workflows.phenotyping import export_concept_set
+
+    if scope is not None and scope not in {"narrow", "broad"}:
+        typer.secho("--scope must be 'narrow' or 'broad'", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2)
+
+    settings = get_settings()
+    try:
+        artifact = ConceptSetArtifact.model_validate_json(artifact_path.read_text(encoding="utf-8"))
+        chosen_scope: ConceptSetScope | None = (
+            "narrow" if scope == "narrow" else ("broad" if scope == "broad" else None)
+        )
+        concept_set = export_concept_set(artifact, name=name, version=version, scope=chosen_scope)
+    except (BioSemAlignError, ValueError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+
+    with atomic_text_writer(
+        output, dir_mode=settings.output_dir_mode, file_mode=settings.output_file_mode
+    ) as handle:
+        handle.write(concept_set.model_dump_json(indent=2) + "\n")
+    typer.echo(
+        f"exported {concept_set.concept_set_id} ({len(concept_set.members)} member(s)) to {output}"
+    )
+
+
+@phenotype_app.command("verify")
+def phenotype_verify(
+    input_path: Annotated[
+        Path, typer.Option("--input", "-i", help="ConceptSetArtifact or ConceptSet JSON/JSONL.")
+    ],
+    profile: Annotated[
+        str | None,
+        typer.Option("--profile", "-p", help="Also check against the profile that produced it."),
+    ] = None,
+) -> None:
+    """Verify a ConceptSetArtifact or exported ConceptSet JSON/JSONL file."""
+    from biosemalign.profiles.loader import load_profile
+    from biosemalign.verification import verify_artifact
+
+    task_profile = load_profile(profile) if profile is not None else None
+    raw_text = input_path.read_text(encoding="utf-8")
+    payloads: list[dict[str, Any]]
+    stripped = raw_text.lstrip()
+    if stripped.startswith("{"):
+        try:
+            loaded = json.loads(raw_text)
+        except json.JSONDecodeError:
+            payloads = [json.loads(line) for line in raw_text.splitlines() if line.strip()]
+        else:
+            payloads = [loaded]
+    else:
+        payloads = [json.loads(line) for line in raw_text.splitlines() if line.strip()]
+
+    verified = 0
+    invalid = []
+    for idx, payload in enumerate(payloads, start=1):
+        res = verify_artifact(payload, profile=task_profile)
+        if res.valid:
+            verified += 1
+        else:
+            invalid.append((idx, res))
+    typer.echo(f"verified: {verified}")
+    typer.echo(f"invalid: {len(invalid)}")
+    for idx, res in invalid:
+        typer.secho(f"  item {idx} {res.artifact_id or '<no id>'}", fg=typer.colors.RED)
+        for error in res.errors:
+            typer.echo(f"    - {error}")
+    if invalid:
+        raise typer.Exit(code=1)
 
 
 # -- helpers ---------------------------------------------------------------

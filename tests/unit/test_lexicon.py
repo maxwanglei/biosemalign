@@ -41,6 +41,7 @@ from typer.testing import CliRunner
 
 from biosemalign import BioSemAlign, verify_artifact
 from biosemalign.cli import app
+from biosemalign.domains.drug.tools.omop import import_omop
 from biosemalign.enums import ConceptStatus, ConcordanceState, RetrievalChannel, RoutingStatus
 from biosemalign.exceptions import (
     ConfigurationError,
@@ -48,13 +49,13 @@ from biosemalign.exceptions import (
     ProviderError,
     ResourceNotPermitted,
 )
-from biosemalign.knowledge.concordance import assess_concordance
 from biosemalign.knowledge.lexicon.build import build_lexicon
 from biosemalign.knowledge.lexicon.contract import LexiconManifest, bundle_digest
-from biosemalign.knowledge.lexicon.omop import import_omop
 from biosemalign.knowledge.providers.base import KnowledgeProvider
 from biosemalign.knowledge.providers.lexicon import LexiconProvider, LexiconStore
-from biosemalign.ops import ConcordanceFuseOp, LexiconRetrieveOp
+from biosemalign.modules.link.concordance import assess_concordance
+from biosemalign.modules.link.standard import StandardLinker
+from biosemalign.modules.match.lexicon import ExactMatcher
 from biosemalign.profiles.loader import load_profile
 from biosemalign.schemas.knowledge import CandidateConcept, RetrievalEvidence
 from biosemalign.util import stable_id
@@ -360,7 +361,16 @@ def test_bundle_without_trigrams_rejects_trigram_retrieval(tmp_path: Path) -> No
     assert provider.search("alpha sodium", top_k=2)[0].candidate_id == "1101"
     with (
         pytest.raises(ConfigurationError, match="no index for"),
-        lexicon_pipeline(tmp_path, tmp_path / "bundle", manifest),
+        lexicon_pipeline(
+            tmp_path,
+            tmp_path / "bundle",
+            manifest,
+            profile=lexicon_profile(
+                tiers=[
+                    {"name": "trig", "match": [{"op": "lexical", "options": {"method": "trigram"}}]}
+                ]
+            ),
+        ),
     ):
         pass
     store.close()
@@ -391,7 +401,7 @@ def test_provider_implements_the_knowledge_provider_protocol(store: LexiconStore
     assert not provider.validate_concept("missing").exists
 
     direct = provider.get_relationships("2001", predicates=["has_ingredient", "has_tradename"])
-    assert {(s.predicate, s.object_id, s.extensions["target_tty"]) for s in direct} == {
+    assert {(s.predicate, s.object_id, s.object_class) for s in direct} == {
         ("has_ingredient", "1001", "IN"),
         ("has_tradename", "3001", "BN"),
     }
@@ -440,24 +450,24 @@ def test_lexicon_served_rxnorm_matches_the_rxnav_outcome(
 def test_default_workflow_queries_the_lexicon_when_it_serves_the_target(
     pipeline: BioSemAlign,
 ) -> None:
-    [tier] = pipeline.workflow.tiers
-    assert [op.op_id for op in tier.retrievers] == ["lexicon"]
+    [exact_tier, lexical_tier] = pipeline.workflow.tiers
+    assert [op.op_id for op in exact_tier.matchers] == ["exact"]
+    assert [op.op_id for op in lexical_tier.matchers] == ["lexical"]
     assert pipeline.align_value(HISTORICAL).routing_status is RoutingStatus.HUMAN_REVIEW
 
 
 def test_validity_dates_filter_when_requested(pipeline: BioSemAlign) -> None:
-    op = LexiconRetrieveOp(
+    op = ExactMatcher(
         pipeline.knowledge,
         pipeline.profile,
         vocabularies=["RxNorm"],
-        methods=["exact"],
         respect_validity_dates=True,
     )
     assert op.options["respect_validity_dates"] is True
 
     def codes(**context: Any) -> list[str]:
         sau = pipeline.build_sau(pipeline.make_request(HISTORICAL, **context))[0]
-        return [c.candidate_id for c in op.retrieve(sau).candidates]
+        return [c.candidate_id for c in op.match(sau).candidates]
 
     assert codes(date="2023-05-01") == []
     assert codes(date="20190101") == ["6001"]
@@ -466,12 +476,12 @@ def test_validity_dates_filter_when_requested(pipeline: BioSemAlign) -> None:
     assert codes(date="2019-02-30") == ["6001"]
 
 
-def test_rxnav_retriever_refuses_lexicon_served_rxnorm(
+def test_rxnav_matcher_refuses_lexicon_served_rxnorm(
     built: tuple[Path, Path, LexiconManifest], tmp_path: Path
 ) -> None:
     _, bundle, manifest = built
-    profile = lexicon_profile(workflow={"tiers": [{"name": "remote"}]})
-    with pytest.raises(ConfigurationError, match="use the 'lexicon' retriever"):
+    profile = lexicon_profile(tiers=[{"name": "remote", "match": ["drug.rxnav"]}])
+    with pytest.raises(ConfigurationError, match=r"instead of 'drug\.rxnav'"):
         lexicon_pipeline(tmp_path, bundle, manifest, profile=profile)
 
 
@@ -483,21 +493,19 @@ def test_unserved_resources_fail_with_an_explanation(
     with pytest.raises(ResourceNotPermitted, match="served only from a local lexicon"):
         synthetic_pipeline.knowledge.provider_for("LocalLexicon")
     profile = lexicon_profile(secondary_resources=["UNII"])
-    with pytest.raises(ConfigurationError, match="no workflow retriever queries them"):
+    with pytest.raises(ConfigurationError, match="no workflow matcher queries them"):
         make_pipeline(tmp_path, profile=profile)
     with pytest.raises(ConfigurationError, match="needs a lexicon bundle"):
-        LexiconRetrieveOp(synthetic_pipeline.knowledge, synthetic_pipeline.profile)
+        ExactMatcher(synthetic_pipeline.knowledge, synthetic_pipeline.profile)
 
 
-def test_lexicon_retriever_needs_a_served_vocabulary(pipeline: BioSemAlign) -> None:
+def test_lexicon_matcher_needs_a_served_vocabulary(pipeline: BioSemAlign) -> None:
     with pytest.raises(ConfigurationError, match="no vocabulary to query"):
-        LexiconRetrieveOp(
+        ExactMatcher(
             pipeline.knowledge,
             load_profile("faers_drug_normalization").model_copy(
                 update={
-                    "knowledge": pipeline.profile.knowledge.model_copy(
-                        update={"primary_resources": []}
-                    )
+                    "knowledge": pipeline.profile.knowledge.model_copy(update={"resources": []})
                 }
             ),
         )
@@ -522,7 +530,7 @@ def test_concordance_outcomes_drive_the_cascade(
     cascade: BioSemAlign, mention: str, state: ConcordanceState, reason: str | None
 ) -> None:
     sau = cascade.build_sau(cascade.make_request(mention))[0]
-    package = cascade.retrieve_knowledge(sau)
+    package = cascade.build_package(sau)
     assert package.concordance is not None
     assert package.concordance.state is state
 
@@ -571,7 +579,7 @@ def test_concordant_decisions_report_every_equivalent_code(cascade: BioSemAlign)
 
 def test_redistributed_names_count_once(cascade: BioSemAlign) -> None:
     sau = cascade.build_sau(cascade.make_request(REDISTRIBUTED))[0]
-    package = cascade.retrieve_knowledge(sau)
+    package = cascade.build_package(sau)
     [group] = package.concordance.groups
     assert [(m.vocabulary, m.concept_code) for m in group.members] == [
         ("RxNorm", "1002"),
@@ -601,13 +609,19 @@ def test_salt_base_conflict_is_never_auto_accepted(cascade: BioSemAlign) -> None
 
 def test_equivalence_keys_bound_what_counts_as_the_same_entity(cascade: BioSemAlign) -> None:
     sau = cascade.build_sau(cascade.make_request(CONCORDANT))[0]
-    retriever = cascade.workflow.tiers[0].retrievers[0]
-    candidates = retriever.retrieve(sau)
-    narrow = ConcordanceFuseOp(cascade.knowledge, cascade.profile, equivalence_keys=["RxNorm"])
-    package = narrow.fuse(sau, [candidates])
+    matcher = cascade.workflow.tiers[0].matchers[0]
+    candidates = matcher.match(sau)
+    narrow = StandardLinker(
+        cascade.knowledge, cascade.profile, concordance=True, equivalence_keys=["RxNorm"]
+    )
+    package = narrow.link(sau, [candidates])
     # MeSH:D-ALPHA links to the others only through a MeSH key, now excluded.
     assert package.concordance.state is ConcordanceState.CROSS_VOCAB_COLLISION
-    assert narrow.options == {"equivalence_keys": ["RxNorm"]}
+    assert narrow.options == {
+        "merge": "priority",
+        "concordance": True,
+        "equivalence_keys": ["RxNorm"],
+    }
 
 
 def _candidate(vocabulary: str, code: str, *, exact: bool = True) -> CandidateConcept:
@@ -639,18 +653,16 @@ def test_concordance_without_cross_references() -> None:
     assert fuzzy.state is ConcordanceState.NO_EXACT_MATCH and fuzzy.groups == []
 
 
-def test_concordant_proposer_passes_without_an_assessment(pipeline: BioSemAlign) -> None:
-    from biosemalign.adjudication.deterministic import DeterministicAdjudicator
-    from biosemalign.ops import ConcordantExactProposeOp
+def test_concordant_resolver_passes_without_an_assessment(pipeline: BioSemAlign) -> None:
+    from biosemalign.modules.resolve.concordant import ConcordantResolver
+    from biosemalign.modules.resolve.deterministic import DeterministicResolver
 
-    proposer = ConcordantExactProposeOp(
-        DeterministicAdjudicator(pipeline.profile), pipeline.profile
-    )
+    resolver = ConcordantResolver(DeterministicResolver(pipeline.profile), pipeline.profile)
     sau = pipeline.build_sau(pipeline.make_request(ALPHA))[0]
-    package = pipeline.retrieve_knowledge(sau)
-    result = proposer.propose(sau, package)
+    package = pipeline.build_package(sau)
+    result = resolver.resolve(sau, package)
     assert getattr(result, "reason", None) == "no_concordance_assessment"
-    assert proposer.options["minimum_mention_length"] == 5
+    assert resolver.options["minimum_mention_length"] == 5
 
 
 # -- OMOP import --------------------------------------------------------------

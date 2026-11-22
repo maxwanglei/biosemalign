@@ -90,6 +90,18 @@
           "default": null,
           "title": "Record Id"
         },
+        "refinement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RefinementOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether slot-based refinement found one, none, or several specific concepts."
+        },
         "relationship_to_source": {
           "$ref": "#/$defs/RelationshipType"
         },
@@ -119,7 +131,7 @@
           "type": "string"
         },
         "schema_version": {
-          "default": "0.3.0",
+          "default": "0.4.0",
           "description": "Version of the BioSemAlign core schema this record conforms to.",
           "title": "Schema Version",
           "type": "string"
@@ -241,6 +253,17 @@
           "default": null,
           "title": "Rationale"
         },
+        "refinement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RefinementOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "relationship_to_source": {
           "$ref": "#/$defs/RelationshipType"
         },
@@ -254,7 +277,7 @@
           "type": "string"
         },
         "schema_version": {
-          "default": "0.3.0",
+          "default": "0.4.0",
           "description": "Version of the BioSemAlign core schema this record conforms to.",
           "title": "Schema Version",
           "type": "string"
@@ -1224,7 +1247,7 @@
             }
           ],
           "default": null,
-          "description": "Each exact match's links to target codes at the requested granularity, derived by the kernel from this package (v0.3); None when concordance was not assessed."
+          "description": "Each matched code's or candidate's links to target codes at the requested granularity, derived by the kernel from this package."
         },
         "ontology_guidance": {
           "items": {
@@ -1232,6 +1255,18 @@
           },
           "title": "Ontology Guidance",
           "type": "array"
+        },
+        "refinement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RefinementOutcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Slot-based refinement outcome recorded when expand runs."
         },
         "resource_provenance": {
           "items": {
@@ -1245,7 +1280,7 @@
           "type": "string"
         },
         "schema_version": {
-          "default": "0.3.0",
+          "default": "0.4.0",
           "description": "Version of the BioSemAlign core schema this record conforms to.",
           "title": "Schema Version",
           "type": "string"
@@ -1306,6 +1341,19 @@
           "description": "Project-specific fields. The core schema never interprets these; they travel with the record and are preserved in output.",
           "title": "Extensions",
           "type": "object"
+        },
+        "object_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Concept class of the object, e.g. 'IN', 'PIN', or 'Group'.",
+          "title": "Object Class"
         },
         "object_id": {
           "title": "Object Id",
@@ -1542,6 +1590,31 @@
           "default": null,
           "title": "End"
         },
+        "extractor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What produced the term, e.g. 'source_field', 'ner:<tool>', or 'llm:<model>'.",
+          "title": "Extractor"
+        },
+        "fidelity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MentionFidelity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether the term occurred verbatim, after normalization, or not in source text."
+        },
         "normalized_text": {
           "description": "Whitespace-collapsed, case-folded form.",
           "title": "Normalized Text",
@@ -1559,6 +1632,12 @@
           "default": null,
           "description": "Canonicalized form that retrievers query instead of ``text``, set by transform operators. It never replaces the source mention: identity claims such as EXACT are still judged against ``text``.",
           "title": "Retrieval Text"
+        },
+        "retrieval_text_from_model": {
+          "default": false,
+          "description": "True when retrieval_text was written by a model-backed cleaner (M4, G10).",
+          "title": "Retrieval Text From Model",
+          "type": "boolean"
         },
         "semantic_types": {
           "description": "Provisional types. More than one is permitted and expected when the evidence is genuinely ambiguous (§5.5) — collapsing to a single guess here would hide the ambiguity from the adjudicator.",
@@ -1592,6 +1671,190 @@
         "normalized_text"
       ],
       "title": "Mention",
+      "type": "object"
+    },
+    "MentionFidelity": {
+      "description": "Whether the mention text appears verbatim in its originating text.",
+      "enum": [
+        "verbatim",
+        "normalized_match",
+        "not_found",
+        "unknown"
+      ],
+      "title": "MentionFidelity",
+      "type": "string"
+    },
+    "ModelCallRecord": {
+      "additionalProperties": false,
+      "description": "Typed provenance record for one language-model call through ModelService (§5.10, G9).",
+      "properties": {
+        "agrees_with_terminology": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agrees With Terminology"
+        },
+        "candidates_shown": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidates Shown"
+        },
+        "choice": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Choice"
+        },
+        "declared_relationship": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Declared Relationship"
+        },
+        "declared_semantic_loss": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Declared Semantic Loss",
+          "type": "array"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "from_cache": {
+          "default": false,
+          "title": "From Cache",
+          "type": "boolean"
+        },
+        "model_name": {
+          "minLength": 1,
+          "title": "Model Name",
+          "type": "string"
+        },
+        "model_rationale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Rationale"
+        },
+        "model_requested_review": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Requested Review"
+        },
+        "model_revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Revision"
+        },
+        "operator_id": {
+          "minLength": 1,
+          "title": "Operator Id",
+          "type": "string"
+        },
+        "operator_kind": {
+          "minLength": 1,
+          "title": "Operator Kind",
+          "type": "string"
+        },
+        "prompt_digest": {
+          "minLength": 1,
+          "title": "Prompt Digest",
+          "type": "string"
+        },
+        "prompt_id": {
+          "minLength": 1,
+          "title": "Prompt Id",
+          "type": "string"
+        },
+        "request_digest": {
+          "minLength": 1,
+          "title": "Request Digest",
+          "type": "string"
+        },
+        "task": {
+          "minLength": 1,
+          "title": "Task",
+          "type": "string"
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tier"
+        }
+      },
+      "required": [
+        "operator_id",
+        "operator_kind",
+        "task",
+        "model_name",
+        "prompt_id",
+        "prompt_digest",
+        "request_digest"
+      ],
+      "title": "ModelCallRecord",
       "type": "object"
     },
     "ModelProvenance": {
@@ -1668,7 +1931,7 @@
       "description": "One configured operator in a workflow (v0.2).",
       "properties": {
         "kind": {
-          "description": "Operator kind: transform, retrieve, fuse, propose, validate.",
+          "description": "Operator kind: clean, match, expand, link, resolve, select, check.",
           "title": "Kind",
           "type": "string"
         },
@@ -1681,6 +1944,12 @@
           "additionalProperties": true,
           "title": "Options",
           "type": "object"
+        },
+        "uses_model": {
+          "default": false,
+          "description": "True when this operator calls a language model (§5.10).",
+          "title": "Uses Model",
+          "type": "boolean"
         },
         "version": {
           "minLength": 1,
@@ -1759,6 +2028,13 @@
           ],
           "default": null
         },
+        "model_calls": {
+          "items": {
+            "$ref": "#/$defs/ModelCallRecord"
+          },
+          "title": "Model Calls",
+          "type": "array"
+        },
         "package_version": {
           "title": "Package Version",
           "type": "string"
@@ -1818,7 +2094,7 @@
           "type": "string"
         },
         "schema_version": {
-          "default": "0.3.0",
+          "default": "0.4.0",
           "description": "Version of the BioSemAlign core schema this record conforms to.",
           "title": "Schema Version",
           "type": "string"
@@ -1954,6 +2230,66 @@
       ],
       "title": "ReadinessStatus",
       "type": "string"
+    },
+    "RefinementOutcome": {
+      "additionalProperties": false,
+      "description": "Whether slot-based refinement narrowed a coarse anchor to a single specific concept.",
+      "properties": {
+        "anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QualifiedCode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/QualifiedCode"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "selected": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QualifiedCode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "slots_checked": {
+          "additionalProperties": true,
+          "title": "Slots Checked",
+          "type": "object"
+        },
+        "status": {
+          "enum": [
+            "unique",
+            "none",
+            "multiple",
+            "not_applicable"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "detail"
+      ],
+      "title": "RefinementOutcome",
+      "type": "object"
     },
     "RelationshipType": {
       "description": "How the selected target concept relates to the source (§7.3).\n\nThe values below the divider are reserved for later phenotype and\ncross-species work and are rejected by the v0.1 FAERS profile.",
@@ -2140,6 +2476,12 @@
       "properties": {
         "channel": {
           "$ref": "#/$defs/RetrievalChannel"
+        },
+        "from_model_suggestion": {
+          "default": false,
+          "description": "True when found via model-written query text or a model-backed matcher/expander suggestion (M4, G10).",
+          "title": "From Model Suggestion",
+          "type": "boolean"
         },
         "provider": {
           "title": "Provider",
@@ -2444,7 +2786,7 @@
           "type": "string"
         },
         "schema_version": {
-          "default": "0.3.0",
+          "default": "0.4.0",
           "description": "Version of the BioSemAlign core schema this record conforms to.",
           "title": "Schema Version",
           "type": "string"
@@ -2648,6 +2990,7 @@
         "structured_field",
         "structured_record",
         "structured_batch",
+        "extracted_terms",
         "unstructured_text"
       ],
       "title": "SourceType",
@@ -2931,7 +3274,7 @@
       "$ref": "#/$defs/SemanticAlignmentUnit"
     },
     "schema_version": {
-      "default": "0.3.0",
+      "default": "0.4.0",
       "description": "Version of the BioSemAlign core schema this record conforms to.",
       "title": "Schema Version",
       "type": "string"
@@ -2952,5 +3295,5 @@
   ],
   "title": "AlignmentArtifact",
   "type": "object",
-  "x-biosemalign-schema-version": "0.3.0"
+  "x-biosemalign-schema-version": "0.4.0"
 }

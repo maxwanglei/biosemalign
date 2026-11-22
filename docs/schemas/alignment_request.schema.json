@@ -15,6 +15,7 @@
         "structured_field",
         "structured_record",
         "structured_batch",
+        "extracted_terms",
         "unstructured_text"
       ],
       "title": "SourceType",
@@ -58,7 +59,7 @@
       "default": "user_specified"
     },
     "schema_version": {
-      "default": "0.3.0",
+      "default": "0.4.0",
       "description": "Version of the BioSemAlign core schema this record conforms to.",
       "title": "Schema Version",
       "type": "string"
@@ -109,5 +110,5 @@
   ],
   "title": "AlignmentRequest",
   "type": "object",
-  "x-biosemalign-schema-version": "0.3.0"
+  "x-biosemalign-schema-version": "0.4.0"
 }

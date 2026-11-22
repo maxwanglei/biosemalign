@@ -1,17 +1,24 @@
-"""Task-profile schema (§14).
+"""Task-profile schema (Schema 2, §5.8).
 
 Project behaviour is configured, not hard-coded. A profile is validated
-strictly on load so that a typo in ``allowed_relationships`` fails loudly at
-startup rather than silently widening what the adjudicator may consider.
+strictly on load so that a typo in ``allowed_relationships`` or an unknown
+operator fails loudly at startup rather than silently altering behaviour.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from biosemalign.enums import MentionMode, RelationshipType, SemanticType, SourceType
+from biosemalign.enums import (
+    DecisionType,
+    MentionMode,
+    RelationshipType,
+    SemanticType,
+    Severity,
+    SourceType,
+)
 from biosemalign.schemas.base import BioSemAlignModel
 from biosemalign.schemas.sau import ContextEnvelope, ContextualAttributes
 
@@ -19,18 +26,25 @@ if TYPE_CHECKING:
     from biosemalign.targets.spec import TargetSpec
 
 __all__ = [
-    "AdjudicationConfig",
+    "ContextConfig",
+    "ContextFieldConfig",
     "InputConfig",
     "KnowledgeConfig",
+    "LimitsConfig",
     "OperatorConfig",
-    "RetrievalConfig",
     "RoutingConfig",
+    "TargetConfig",
     "TaskConfig",
     "TaskProfile",
     "TierConfig",
-    "ValidationConfig",
-    "WorkflowConfig",
+    "domain_fields",
+    "register_domain_fields",
+    "unregister_domain_fields",
 ]
+
+ContextUse = Literal["key", "clean", "match", "expand", "resolve", "select", "check"]
+ContextKind = Literal["attribute", "context"]
+WorkflowKind = Literal["mapping", "coding", "phenotyping"]
 
 _OCCURRENCE_ONLY_MAPPING_KEY_FIELDS = frozenset(
     {"record_id", "evidence_block_id", "neighboring_fields", "extensions"}
@@ -39,27 +53,16 @@ _SUPPORTED_MAPPING_KEY_CONTEXT_FIELDS = frozenset(
     (set(ContextEnvelope.model_fields) | set(ContextualAttributes.model_fields))
     - _OCCURRENCE_ONLY_MAPPING_KEY_FIELDS
 )
-#: Context a proposer can be blinded to. Fields mirrored as contextual
+#: Context a resolver or selector can be blinded to. Fields mirrored as contextual
 #: attributes are excluded: a decision must preserve those, so hiding them
-#: from the proposer would make every proposal fail attribute validation.
-#: Module names of a tier's stages (v0.3) and the fields they spell.
-_TIER_MODULES = {"coding": "retrievers", "linking": "fuser", "resolution": "proposer"}
-
-#: ``target:`` section fields and the task fields they spell.
-_TARGET_FIELDS = {
-    "spec": "target_spec",
-    "terminology": "target_terminology",
-    "granularity": "desired_granularity",
-    "source_terminologies": "source_terminologies",
-}
-
+#: would make every proposal fail attribute validation.
 _BLINDABLE_CONTEXT_FIELDS = frozenset(
     set(ContextEnvelope.model_fields) - set(ContextualAttributes.model_fields)
 )
 
 
 class OperatorConfig(BioSemAlignModel):
-    """A registered operator and its options, e.g. ``{op: rxnav}``."""
+    """A registered operator and its options, e.g. ``{op: drug.rxnav}``."""
 
     op: str = Field(min_length=1)
     options: dict[str, Any] = Field(default_factory=dict)
@@ -73,14 +76,24 @@ class OperatorConfig(BioSemAlignModel):
 class TaskConfig(BioSemAlignModel):
     operation: str
     mapping_intent: str
-    target_terminology: str
-    desired_granularity: str | None = None
-    target_spec: str | None = Field(
+    relation_types: list[RelationshipType] = Field(
+        default_factory=list,
+        description="Relationship classes a resolver may emit for this task.",
+    )
+
+
+class TargetConfig(BioSemAlignModel):
+    terminology: str
+    spec: str | None = Field(
         default=None,
         description=(
             "Target spec: a built-in id such as 'rxnorm', or a path to a spec YAML. "
-            "None uses the built-in spec of target_terminology."
+            "None uses the built-in spec of terminology."
         ),
+    )
+    level: str | None = Field(
+        default=None,
+        description="Requested granularity / concept level in the target terminology.",
     )
     source_terminologies: list[str] = Field(
         default_factory=list,
@@ -90,6 +103,21 @@ class TaskConfig(BioSemAlignModel):
             "concepts. Analysis-level concepts always come from the target terminology."
         ),
     )
+    require_active_concept: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_terminology_from_spec(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        if value.get("terminology") or not value.get("spec"):
+            return value
+        from biosemalign.targets import builtin_specs
+
+        builtin = builtin_specs().get(str(value["spec"]))
+        if builtin is None:
+            return value
+        return {**value, "terminology": builtin.target}
 
     def source_vocabulary(self, vocabulary: str | None) -> str:
         """Where a source-level concept of ``vocabulary`` is looked up.
@@ -101,7 +129,7 @@ class TaskConfig(BioSemAlignModel):
             v.casefold() for v in self.source_terminologies
         }:
             return vocabulary
-        return self.target_terminology
+        return self.terminology
 
 
 class InputConfig(BioSemAlignModel):
@@ -111,43 +139,10 @@ class InputConfig(BioSemAlignModel):
     value_field: str | None = Field(
         default=None, description="For record input, which key holds the value to map."
     )
-    required_context: list[str] = Field(
-        default_factory=list,
-        description="Context fields whose absence downgrades SAU readiness (§5.8).",
+    mention_not_in_source_severity: Severity = Field(
+        default=Severity.WARNING,
+        description="Severity emitted when Mention.fidelity is 'not_found' (D12).",
     )
-    optional_context: list[str] = Field(
-        default_factory=list,
-        description="Context fields captured when present; absence is not a warning.",
-    )
-    mapping_key_context: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Canonical context or attribute fields that distinguish reusable mappings. "
-            "Source-row identifiers are deliberately excluded."
-        ),
-    )
-
-    @field_validator("mapping_key_context")
-    @classmethod
-    def _validate_mapping_key_context(cls, fields: list[str]) -> list[str]:
-        duplicates = sorted({field for field in fields if fields.count(field) > 1})
-        if duplicates:
-            raise ValueError(f"mapping_key_context contains duplicate fields: {duplicates}")
-
-        occurrence_only = sorted(set(fields) & _OCCURRENCE_ONLY_MAPPING_KEY_FIELDS)
-        if occurrence_only:
-            raise ValueError(
-                "mapping_key_context contains occurrence-only fields that prevent safe reuse: "
-                f"{occurrence_only}"
-            )
-
-        unknown = sorted(set(fields) - _SUPPORTED_MAPPING_KEY_CONTEXT_FIELDS)
-        if unknown:
-            raise ValueError(
-                f"mapping_key_context contains unknown canonical fields: {unknown}; "
-                f"supported fields: {sorted(_SUPPORTED_MAPPING_KEY_CONTEXT_FIELDS)}"
-            )
-        return fields
 
     @model_validator(mode="after")
     def _reject_unimplemented_mention_detection(self) -> InputConfig:
@@ -167,9 +162,79 @@ class InputConfig(BioSemAlignModel):
         )
 
 
+class ContextFieldConfig(BioSemAlignModel):
+    """Declaration of one context or attribute field."""
+
+    name: str = Field(min_length=1)
+    aliases: list[str] = Field(default_factory=list)
+    kind: ContextKind = "context"
+    use: list[ContextUse] = Field(default_factory=list)
+    required: bool = False
+    blinded: bool = Field(
+        default=False,
+        description=(
+            "Context fields withheld from resolvers/selectors because they can carry the "
+            "studied outcome (e.g. an indication)."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_blinding_and_key_rules(self) -> ContextFieldConfig:
+        if "key" in self.use and self.name in _OCCURRENCE_ONLY_MAPPING_KEY_FIELDS:
+            raise ValueError(
+                "context field with use='key' cannot be an occurrence-only field that "
+                f"prevents safe reuse: {self.name!r}"
+            )
+        if self.blinded:
+            if (
+                self.kind == "attribute"
+                or self.name in ContextualAttributes.model_fields
+                or self.name in {"neighboring_fields", "extensions"}
+            ):
+                raise ValueError(
+                    f"blinded field {self.name!r} cannot be blinded; contextual-attribute fields "
+                    "(route, dose, unit, species) must be preserved by every decision. "
+                    f"Blindable fields: {sorted(_BLINDABLE_CONTEXT_FIELDS)}"
+                )
+            disallowed = [u for u in self.use if u in {"resolve", "select"}]
+            if disallowed:
+                raise ValueError(f"blinded field {self.name!r} cannot list {disallowed!r} in use")
+        return self
+
+
+class ContextConfig(BioSemAlignModel):
+    """Declared context and attribute fields."""
+
+    fields: list[ContextFieldConfig] = Field(default_factory=list)
+
+    @field_validator("fields")
+    @classmethod
+    def _unique_field_names(cls, fields: list[ContextFieldConfig]) -> list[ContextFieldConfig]:
+        names = [field.name for field in fields]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise ValueError(f"context.fields contains duplicate fields: {duplicates}")
+        return fields
+
+    @property
+    def required_context(self) -> list[str]:
+        return [field.name for field in self.fields if field.required]
+
+    @property
+    def optional_context(self) -> list[str]:
+        return [field.name for field in self.fields if not field.required and field.use != ["key"]]
+
+    @property
+    def mapping_key_context(self) -> list[str]:
+        return [field.name for field in self.fields if "key" in field.use]
+
+    @property
+    def blinded_fields(self) -> list[str]:
+        return sorted(field.name for field in self.fields if field.blinded)
+
+
 class KnowledgeConfig(BioSemAlignModel):
-    primary_resources: list[str] = Field(default_factory=list)
-    secondary_resources: list[str] = Field(default_factory=list)
+    resources: list[str] = Field(default_factory=list)
     allowed_relationships: list[str] = Field(default_factory=list)
     prohibited_relationships: list[str] = Field(
         default_factory=list,
@@ -179,27 +244,6 @@ class KnowledgeConfig(BioSemAlignModel):
             "associations would bias candidate discovery (§6.2)."
         ),
     )
-    blinded_context_fields: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Context fields withheld from proposers because they can carry the "
-            "studied outcome (an indication, a publication's disease terms). "
-            "Resolution that depends on them would misclassify exposure "
-            "differentially by outcome."
-        ),
-    )
-
-    @field_validator("blinded_context_fields")
-    @classmethod
-    def _validate_blinded_fields(cls, fields: list[str]) -> list[str]:
-        unknown = sorted(set(fields) - _BLINDABLE_CONTEXT_FIELDS)
-        if unknown:
-            raise ValueError(
-                f"blinded_context_fields contains fields that cannot be blinded: {unknown}; "
-                "contextual-attribute fields (route, dose, unit, species) must be preserved "
-                f"by every decision. Blindable fields: {sorted(_BLINDABLE_CONTEXT_FIELDS)}"
-            )
-        return sorted(set(fields))
 
     @model_validator(mode="after")
     def _no_predicate_in_both_lists(self) -> KnowledgeConfig:
@@ -221,98 +265,17 @@ class KnowledgeConfig(BioSemAlignModel):
         return not self.allowed_relationships or predicate in self.allowed_relationships
 
 
-class RetrievalConfig(BioSemAlignModel):
-    exact_lookup: bool = True
-    terminology_approximate_match: bool = True
-    lexical_retrieval: bool = False
-    embedding_retrieval: bool = False
-    include_historical_candidates: bool = Field(
-        default=True,
-        description=(
-            "Search obsolete and non-primary-source concepts as a last resort. "
-            "They are flagged, never silently mixed with current concepts, and "
-            "are the only way to resolve withdrawn products in historical FAERS "
-            "reports."
-        ),
-    )
-    maximum_candidates: int = Field(default=10, ge=1, le=100)
-    progressive_enrichment_batch_size: int = Field(
+class LimitsConfig(BioSemAlignModel):
+    """Bounds on knowledge packages, expansions, and progressive enrichment."""
+
+    candidates: int = Field(default=10, ge=1, le=100)
+    members: int = Field(default=2000, ge=1)
+    enrichment_batch_size: int = Field(
         default=3,
         ge=1,
         le=100,
         description="Number of ranked candidates enriched before the stopping rule is re-evaluated.",
     )
-
-    @model_validator(mode="after")
-    def _reject_unimplemented_channels(self) -> RetrievalConfig:
-        unsupported = [
-            name
-            for name, enabled in (
-                ("lexical_retrieval", self.lexical_retrieval),
-                ("embedding_retrieval", self.embedding_retrieval),
-            )
-            if enabled
-        ]
-        if unsupported:
-            raise ValueError(
-                f"retrieval channels are not implemented in v0.1: {', '.join(unsupported)}"
-            )
-        return self
-
-
-class AdjudicationConfig(BioSemAlignModel):
-    candidate_constrained: bool = True
-    backend: str = Field(
-        default="deterministic",
-        description="Adjudicator to use: 'deterministic', 'mock', or 'vllm'.",
-    )
-    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
-    relation_types: list[RelationshipType] = Field(
-        default_factory=list,
-        description="Relationship classes the adjudicator may emit for this task.",
-    )
-    prompt_version: str | None = None
-    llm_max_candidates: int = Field(
-        default=15,
-        ge=1,
-        le=50,
-        description=(
-            "Candidates an LLM adjudicator is shown. Reranking accuracy degrades on longer "
-            "lists, so startup verification refuses retrieval.maximum_candidates above it."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _require_candidate_constraint(self) -> AdjudicationConfig:
-        if not self.candidate_constrained:
-            raise ValueError(
-                "candidate_constrained=false is not implemented in v0.1; adjudication "
-                "must remain bounded by retrieved evidence"
-            )
-        return self
-
-
-class ValidationConfig(BioSemAlignModel):
-    require_active_concept: bool = True
-    preserve_combination_ingredients: bool = True
-    prohibit_unretrieved_identifiers: bool = True
-    flag_salt_active_moiety_conflation: bool = True
-    rules: list[OperatorConfig] = Field(
-        default_factory=lambda: [OperatorConfig(op="drug_semantics")],
-        description=(
-            "Validation operators run after the mandatory terminology checks, in "
-            "order. The terminology checks themselves cannot be removed."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _require_bounded_identifiers(self) -> ValidationConfig:
-        if not self.prohibit_unretrieved_identifiers:
-            raise ValueError(
-                "prohibit_unretrieved_identifiers=false is not supported in v0.1; "
-                "every final concept must be owned by bounded canonical evidence"
-            )
-        return self
 
 
 class RoutingConfig(BioSemAlignModel):
@@ -322,6 +285,13 @@ class RoutingConfig(BioSemAlignModel):
     historical_candidate_requires_review: bool = Field(
         default=True,
         description="A mapping resting on an obsolete concept is never auto-accepted.",
+    )
+    allow_model_auto_abstain: bool = Field(
+        default=False,
+        description=(
+            "When False (M3), terms declined by a model route to human review instead of "
+            "automatic abstention."
+        ),
     )
     minimum_auto_accept_score: float | None = Field(
         default=None,
@@ -348,10 +318,14 @@ class RoutingConfig(BioSemAlignModel):
         ge=0.0,
         le=1.0,
         description=(
-            "Lexical agreement below which the adjudicator rejects every candidate. "
+            "Lexical agreement below which the resolver rejects every candidate. "
             "RxNav's approximate matcher always returns its nearest neighbour, so "
             "without a floor an unmappable string maps confidently to something."
         ),
+    )
+    options: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Domain-pack routing options.",
     )
 
     @model_validator(mode="after")
@@ -369,127 +343,160 @@ class TierConfig(BioSemAlignModel):
     """One tier of a workflow cascade."""
 
     name: str = Field(min_length=1)
-    transforms: list[OperatorConfig] = Field(default_factory=list)
-    retrievers: list[OperatorConfig] = Field(
-        default_factory=lambda: [OperatorConfig(op="rxnav")],
+    clean: list[OperatorConfig] = Field(default_factory=list)
+    match: list[OperatorConfig] = Field(
+        default_factory=lambda: [OperatorConfig(op="exact")],
         min_length=1,
         description="Queried in order; more than one forms a parallel union.",
     )
-    fuser: OperatorConfig = Field(default_factory=lambda: OperatorConfig(op="knowledge_package"))
-    proposer: OperatorConfig = Field(default_factory=lambda: OperatorConfig(op="adjudicator"))
+    expand: OperatorConfig | list[OperatorConfig] | None = None
+    link: OperatorConfig | None = Field(default_factory=lambda: OperatorConfig(op="standard"))
+    resolve: OperatorConfig | None = Field(default_factory=lambda: OperatorConfig(op="rules"))
+    select: OperatorConfig | None = None
+    pass_on: list[DecisionType] = Field(
+        default_factory=list,
+        description="Proposal outcomes handed to the next tier instead of being finalized.",
+    )
+    pass_on_review_request: bool = Field(
+        default=False,
+        description="Hand proposals that request human review to the next tier.",
+    )
 
-    @model_validator(mode="before")
+    @property
+    def expand_ops(self) -> list[OperatorConfig]:
+        if self.expand is None:
+            return []
+        if isinstance(self.expand, list):
+            return list(self.expand)
+        return [self.expand]
+
+    @field_validator("clean", "match", mode="before")
     @classmethod
-    def _module_names(cls, data: Any) -> Any:
-        """Accept the module names: ``coding``, ``linking``, ``resolution`` (v0.3).
-
-        They spell ``retrievers``, ``fuser``, and ``proposer`` and are stored
-        under those names, so a profile written either way is the same profile.
-        """
-        if not isinstance(data, dict):
-            return data
-        data = dict(data)
-        for module, stage in _TIER_MODULES.items():
-            if module not in data:
-                continue
-            if stage in data:
-                raise ValueError(f"tier sets both {module!r} and {stage!r}; use one")
-            value = data.pop(module)
-            if stage == "retrievers" and not isinstance(value, list):
-                value = [value]
-            data[stage] = value
-        return data
+    def _coerce_single_operator(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, list):
+            return [value]
+        return value
 
 
-class WorkflowConfig(BioSemAlignModel):
-    """A cascade of tiers; the first tier to propose hands off to the kernel."""
+_DOMAIN_CONTEXT_FIELDS: dict[str, tuple[ContextFieldConfig, ...]] = {}
 
-    tiers: list[TierConfig] = Field(min_length=1)
+
+def register_domain_fields(domain: str, fields: list[ContextFieldConfig]) -> None:
+    """Register default context/attribute field declarations for ``domain``."""
+    _DOMAIN_CONTEXT_FIELDS[domain.casefold()] = tuple(fields)
+
+
+def unregister_domain_fields(domain: str) -> None:
+    """Remove registered context field declarations for ``domain``."""
+    _DOMAIN_CONTEXT_FIELDS.pop(domain.casefold(), None)
+
+
+def domain_fields(domain: str | None) -> list[ContextFieldConfig]:
+    """Copy of context field declarations registered by ``domain``."""
+    if not domain:
+        return []
+    return [
+        field.model_copy(deep=True) for field in _DOMAIN_CONTEXT_FIELDS.get(domain.casefold(), ())
+    ]
+
+
+class TaskProfile(BioSemAlignModel):
+    """One project's complete Schema 2 configuration of the framework (§5.8)."""
+
+    profile_schema: Literal[2] = 2
+    profile_name: str
+    profile_version: str
+    description: str | None = None
+    domain: str | None = None
+    workflow: WorkflowKind = "mapping"
+
+    task: TaskConfig
+    target: TargetConfig
+    input: InputConfig = Field(default_factory=InputConfig)
+    context: ContextConfig = Field(default_factory=ContextConfig)
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    limits: LimitsConfig = Field(default_factory=LimitsConfig)
+    tiers: list[TierConfig] | None = Field(
+        default=None,
+        description="Operator cascade; omitted means the default single-tier mapping cascade.",
+    )
+    checks: list[OperatorConfig] = Field(
+        default_factory=list,
+        description=(
+            "Check operators run after the mandatory kernel checks, in order. "
+            "The mandatory terminology checks cannot be removed."
+        ),
+    )
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
 
     @field_validator("tiers")
     @classmethod
-    def _tier_names_are_unique(cls, tiers: list[TierConfig]) -> list[TierConfig]:
+    def _validate_tiers(cls, tiers: list[TierConfig] | None) -> list[TierConfig] | None:
+        if tiers is None:
+            return None
+        if not tiers:
+            raise ValueError("tiers must not be empty; omit or set to null for default cascade")
         names = [tier.name for tier in tiers]
         duplicates = sorted({name for name in names if names.count(name) > 1})
         if duplicates:
             raise ValueError(f"workflow tier names must be unique: {duplicates}")
         return tiers
 
-
-class TaskProfile(BioSemAlignModel):
-    """One project's complete configuration of the framework (§14)."""
-
-    profile_name: str
-    profile_version: str
-    description: str | None = None
-    task: TaskConfig
-    input: InputConfig = Field(default_factory=InputConfig)
-    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
-    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
-    adjudication: AdjudicationConfig = Field(default_factory=AdjudicationConfig)
-    validation: ValidationConfig = Field(default_factory=ValidationConfig)
-    routing: RoutingConfig = Field(default_factory=RoutingConfig)
-    workflow: WorkflowConfig | None = Field(
-        default=None,
-        description="Operator cascade; omitted means the single-tier v0.1 pipeline.",
-    )
-
     @model_validator(mode="after")
     def _target_terminology_is_a_declared_resource(self) -> TaskProfile:
-        resources = {r.casefold() for r in self.knowledge.primary_resources}
-        if resources and self.task.target_terminology.casefold() not in resources:
+        resources = {r.casefold() for r in self.knowledge.resources}
+        if resources and self.target.terminology.casefold() not in resources:
             raise ValueError(
-                f"target_terminology {self.task.target_terminology!r} is not among "
-                f"primary_resources {self.knowledge.primary_resources!r}; the profile "
+                f"target.terminology {self.target.terminology!r} is not among "
+                f"knowledge.resources {self.knowledge.resources!r}; the profile "
                 "would ask for concepts from a vocabulary it never queries"
             )
         return self
-
-    @model_validator(mode="before")
-    @classmethod
-    def _target_section(cls, data: Any) -> Any:
-        """Accept ``target:`` as a spelling of the task's target fields.
-
-        ``target: {spec, terminology, granularity, source_terminologies}`` fills
-        ``task.target_spec``, ``task.target_terminology``,
-        ``task.desired_granularity``, and ``task.source_terminologies``. A value
-        given both ways must agree.
-        """
-        if not isinstance(data, dict) or "target" not in data:
-            return data
-        data = dict(data)
-        target = data.pop("target") or {}
-        if not isinstance(target, dict):
-            raise ValueError("target must be a mapping")
-        unknown = sorted(set(target) - set(_TARGET_FIELDS))
-        if unknown:
-            raise ValueError(
-                f"target has unknown fields {unknown}; allowed: {list(_TARGET_FIELDS)}"
-            )
-        task = dict(data.get("task") or {})
-        if "spec" in target and "terminology" not in target and "target_terminology" not in task:
-            from biosemalign.targets import builtin_specs
-
-            builtin = builtin_specs().get(str(target["spec"]))
-            if builtin is not None:
-                target = {**target, "terminology": builtin.target}
-        for name, field in _TARGET_FIELDS.items():
-            if name not in target:
-                continue
-            if field in task and task[field] != target[name]:
-                raise ValueError(
-                    f"target.{name} ({target[name]!r}) contradicts task.{field} ({task[field]!r})"
-                )
-            task[field] = target[name]
-        data["task"] = task
-        return data
 
     def target_spec(self) -> TargetSpec:
         """The target terminology spec this profile maps into."""
         from biosemalign.targets import load_target_spec
 
-        return load_target_spec(self.task.target_spec, terminology=self.task.target_terminology)
+        return load_target_spec(self.target.spec, terminology=self.target.terminology)
+
+    def effective_context_fields(self) -> list[ContextFieldConfig]:
+        """Declared context/attribute fields merged with domain-pack defaults."""
+        base: list[ContextFieldConfig] = []
+        if self.domain:
+            base = domain_fields(self.domain)
+            if not base:
+                from biosemalign.plugins import ensure_plugins_loaded
+
+                ensure_plugins_loaded()
+                base = domain_fields(self.domain)
+        profile_by_name = {field.name: field for field in self.context.fields}
+        seen: set[str] = set()
+        merged: list[ContextFieldConfig] = []
+        for field in base:
+            if field.name in profile_by_name:
+                merged.append(profile_by_name[field.name])
+            else:
+                merged.append(field)
+            seen.add(field.name)
+        for field in self.context.fields:
+            if field.name not in seen:
+                merged.append(field)
+                seen.add(field.name)
+        return merged
+
+    def effective_mapping_key_fields(self) -> list[str]:
+        """Derived mapping-key fields: every attribute field plus any non-empty-use field."""
+        return [
+            field.name
+            for field in self.effective_context_fields()
+            if (field.kind == "attribute" or bool(field.use))
+            and field.name not in _OCCURRENCE_ONLY_MAPPING_KEY_FIELDS
+        ]
+
+    def effective_blinded_fields(self) -> list[str]:
+        """Sorted names of effective context fields blinded from resolvers/selectors."""
+        return sorted(field.name for field in self.effective_context_fields() if field.blinded)
 
     def permits_relation(self, relation: RelationshipType) -> bool:
-        """Whether the adjudicator may emit this relationship class for this task."""
-        return not self.adjudication.relation_types or relation in self.adjudication.relation_types
+        """Whether a resolver may emit this relationship class for this task."""
+        return not self.task.relation_types or relation in self.task.relation_types

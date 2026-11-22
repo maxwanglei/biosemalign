@@ -14,6 +14,7 @@ from biosemalign.enums import (
     ConceptStatus,
     DecisionType,
     ErrorCategory,
+    MentionFidelity,
     RelationshipType,
     Severity,
 )
@@ -21,6 +22,7 @@ from biosemalign.knowledge.providers.base import KnowledgeProvider
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.schemas.decision import AlignmentProposal, SelectedConcept, ValidationFinding
 from biosemalign.schemas.knowledge import ConceptEvidence, KnowledgePackage
+from biosemalign.schemas.sau import SemanticAlignmentUnit
 from biosemalign.util import normalize_text
 
 __all__ = ["validate_terminology"]
@@ -39,11 +41,24 @@ def validate_terminology(
     profile: TaskProfile,
     *,
     provider: KnowledgeProvider | None = None,
+    sau: SemanticAlignmentUnit | None = None,
 ) -> list[ValidationFinding]:
     """Validate proposal structure and every concept-bearing field."""
     findings = _validate_structure(proposal, package)
+    if sau is not None and sau.mention.fidelity is MentionFidelity.NOT_FOUND:
+        findings.append(
+            ValidationFinding(
+                code="MENTION_NOT_IN_SOURCE",
+                severity=profile.input.mention_not_in_source_severity,
+                message=(
+                    f"mention {sau.mention.text!r} was not found in the source text "
+                    f"(extractor={sau.mention.extractor or 'unknown'})"
+                ),
+                error_category=ErrorCategory.VALIDATION_ERROR,
+            )
+        )
     evidence_index = package.qualified_concept_evidence_index()
-    target_vocabulary = profile.task.target_terminology.casefold()
+    target_vocabulary = profile.target.terminology.casefold()
 
     findings.extend(_validate_relation_policy(proposal, profile))
     findings.extend(_validate_relationship_coherence(proposal))
@@ -57,7 +72,7 @@ def validate_terminology(
     }
     for field_name, concept in _concept_occurrences(proposal):
         vocabulary = (
-            profile.task.source_vocabulary(concept.vocabulary).casefold()
+            profile.target.source_vocabulary(concept.vocabulary).casefold()
             if field_name == "source_level_concept"
             else target_vocabulary
         )
@@ -80,7 +95,7 @@ def validate_terminology(
         _validate_historical_source(
             proposal,
             evidence_index,
-            profile.task.source_vocabulary(
+            profile.target.source_vocabulary(
                 proposal.source_level_concept.vocabulary
                 if proposal.source_level_concept is not None
                 else None
@@ -410,8 +425,6 @@ def _validate_concept(
     provider: KnowledgeProvider | None,
 ) -> list[ValidationFinding]:
     if evidence is None:
-        if not profile.validation.prohibit_unretrieved_identifiers:
-            return _validate_target_vocabulary(field_name, concept, profile)
         return [
             _error(
                 "UNRETRIEVED_IDENTIFIER",
@@ -471,7 +484,7 @@ def _validate_concept(
 
     status, status_findings = _canonical_status(field_name, concept, evidence, provider)
     findings.extend(status_findings)
-    if profile.validation.require_active_concept and field_name != "source_level_concept":
+    if profile.target.require_active_concept and field_name != "source_level_concept":
         if status is ConceptStatus.UNKNOWN:
             findings.append(
                 ValidationFinding(
@@ -496,17 +509,17 @@ def _validate_concept(
 def _validate_target_vocabulary(
     field_name: str, concept: SelectedConcept, profile: TaskProfile
 ) -> list[ValidationFinding]:
-    if concept.vocabulary.casefold() == profile.task.target_terminology.casefold():
+    if concept.vocabulary.casefold() == profile.target.terminology.casefold():
         return []
     if (
         field_name == "source_level_concept"
-        and profile.task.source_vocabulary(concept.vocabulary) == concept.vocabulary
+        and profile.target.source_vocabulary(concept.vocabulary) == concept.vocabulary
     ):
         return []
     return [
         _error(
             "WRONG_VOCABULARY",
-            f"{field_name} concept {concept.concept_id} belongs to {concept.vocabulary}, but the task targets {profile.task.target_terminology}",
+            f"{field_name} concept {concept.concept_id} belongs to {concept.vocabulary}, but the task targets {profile.target.terminology}",
             concept.concept_id,
         )
     ]
@@ -584,7 +597,7 @@ def _validate_source_role(
     if (
         source is None
         or package.candidate_by_qualified_id(
-            profile.task.source_vocabulary(source.vocabulary), source.concept_id
+            profile.target.source_vocabulary(source.vocabulary), source.concept_id
         )
         is not None
     ):
@@ -603,14 +616,14 @@ def _validate_target_roles(
     package: KnowledgePackage,
     profile: TaskProfile,
 ) -> list[ValidationFinding]:
-    granularity = profile.task.desired_granularity
+    granularity = profile.target.level
     if granularity is None:
         return []
-    # Which predicate reaches the level, and which classes a target there may
+    # Which predicates reach the level, and which classes a target there may
     # have, come from the target spec.
     spec = profile.target_spec()
-    predicate = spec.predicate(granularity)
-    if predicate is None:
+    level = spec.granularity(granularity)
+    if level is None:
         return [
             _error(
                 "UNSUPPORTED_GRANULARITY",
@@ -619,11 +632,13 @@ def _validate_target_roles(
         ]
 
     wanted_classes = spec.accepted_classes(granularity)
-    if not profile.knowledge.permits(predicate):
+    via_predicates = set(level.via)
+    disallowed = [p for p in level.via if not profile.knowledge.permits(p)]
+    if disallowed:
         return [
             _error(
                 "GRANULARITY_RELATION_NOT_PERMITTED",
-                f"profile does not permit {predicate}, required for {granularity}",
+                f"profile does not permit {disallowed[0]}, required for {granularity}",
             )
         ]
 
@@ -637,7 +652,7 @@ def _validate_target_roles(
         return []
 
     index = package.qualified_concept_evidence_index()
-    target_vocabulary = profile.task.target_terminology.casefold()
+    target_vocabulary = profile.target.terminology.casefold()
     source_id = (
         proposal.source_level_concept.concept_id
         if proposal.source_level_concept is not None
@@ -648,13 +663,14 @@ def _validate_target_roles(
         package,
         profile,
         source_id=source_id,
-        source_vocabulary=profile.task.source_vocabulary(
+        source_vocabulary=profile.target.source_vocabulary(
             proposal.source_level_concept.vocabulary
             if proposal.source_level_concept is not None
             else None
         ),
-        predicate=predicate,
+        granularity=granularity,
     )
+    predicate_label = level.via[0] if level.via else granularity
 
     if proposal.decision is DecisionType.MULTI_CONCEPT_MAPPED:
         selected_ids = {concept.concept_id for concept in proposal.selected_concepts}
@@ -670,7 +686,7 @@ def _validate_target_roles(
                 _error(
                     "MULTI_COMPONENT_SET_MISMATCH",
                     "multi-concept selections must exactly equal the canonical "
-                    f"{predicate} targets of source {source_id or '[missing]'}"
+                    f"{predicate_label} targets of source {source_id or '[missing]'}"
                     + (f": {'; '.join(details)}" if details else ""),
                     source_id,
                     ErrorCategory.ADJUDICATION_ERROR,
@@ -686,7 +702,7 @@ def _validate_target_roles(
             findings.append(
                 _error(
                     "TARGET_NOT_REACHABLE_FROM_SOURCE",
-                    f"{concept.concept_id} is not a canonical {predicate} target of "
+                    f"{concept.concept_id} is not a canonical {predicate_label} target of "
                     f"source {source_id or '[missing]'}",
                     concept.concept_id,
                     ErrorCategory.ADJUDICATION_ERROR,
@@ -704,13 +720,13 @@ def _validate_target_roles(
         predicates = set(evidence.relationship_predicates)
         reachable = source_id is None or source_id in evidence.source_candidate_ids
         class_compatible = concept_class is None or concept_class in wanted_classes
-        if predicate in predicates and reachable and class_compatible:
+        if via_predicates and (predicates & via_predicates) and reachable and class_compatible:
             continue
 
         findings.append(
             _error(
                 "INVALID_GRANULARITY_TARGET",
-                f"{concept.concept_id} is evidenced as class {evidence.concept_class or 'unknown'} via {sorted(predicates) or ['direct retrieval']}, not as a {granularity} target reachable through {predicate}",
+                f"{concept.concept_id} is evidenced as class {evidence.concept_class or 'unknown'} via {sorted(predicates) or ['direct retrieval']}, not as a {granularity} target reachable through {predicate_label}",
                 concept.concept_id,
                 ErrorCategory.UNSUPPORTED_SPECIFICITY,
             )
@@ -724,7 +740,7 @@ def _canonical_source_targets(
     *,
     source_id: str | None,
     source_vocabulary: str,
-    predicate: str,
+    granularity: str | None,
 ) -> set[str]:
     """Return official, profile-permitted targets attached to the chosen source.
 
@@ -733,22 +749,26 @@ def _canonical_source_targets(
     be present in the bounded terminology response for that source, asserted
     by the source's own vocabulary, and point into the target terminology.
     """
-    if source_id is None or not profile.knowledge.permits(predicate):
+    if source_id is None:
         return set()
+    spec = profile.target_spec()
     source = package.candidate_by_qualified_id(source_vocabulary, source_id)
     if source is None:
         return set()
+    from biosemalign.modules.link.targets import targets_at
+
     asserted_by = source_vocabulary.casefold()
-    target = profile.task.target_terminology.casefold()
-    return {
-        statement.object_id
+    target = profile.target.terminology.casefold()
+    official_relationships = [
+        statement
         for statement in source.relationships
-        if statement.subject_id == source_id
-        and statement.predicate == predicate
+        if profile.knowledge.permits(statement.predicate)
         and statement.source_resource.casefold() == asserted_by
         and (statement.object_vocabulary or source.vocabulary).casefold() == target
         and statement.authority is Authority.OFFICIAL_CODING_RELATIONSHIP
-    }
+    ]
+    filtered_source = source.model_copy(update={"relationships": official_relationships})
+    return {reached.concept_code for reached in targets_at(filtered_source, spec, granularity)}
 
 
 def _validate_historical_source(

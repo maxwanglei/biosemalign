@@ -49,7 +49,7 @@ def build_crosswalk(
     family: Sequence[str],
     equivalence_keys: Sequence[str],
     ingredient_classes: Sequence[str] = ("IN",),
-    predicate: str = "has_ingredient",
+    predicate: str | None = "has_ingredient",
 ) -> None:
     """Create table ``output`` with one crosswalk row per row of ``concepts``.
 
@@ -99,25 +99,45 @@ def build_crosswalk(
         "FROM xw_input_keys i JOIN xw_family_keys f USING (key_type, key_value)",
         [families[0]],
     )
-    # Ingredients of every linked family concept.
-    con.execute(
-        f"CREATE OR REPLACE TABLE xw_ingredients AS "
-        f"SELECT l.linked_vocabulary, l.linked_code, c.vocabulary_id AS ingredient_vocabulary, "
-        f"c.concept_code AS ingredient_code, c.concept_name AS ingredient_name "
-        f"FROM (SELECT DISTINCT linked_vocabulary, linked_code FROM xw_links) l "
-        f"JOIN {schema}.concepts c ON c.vocabulary_id = l.linked_vocabulary "
-        f"AND c.concept_code = l.linked_code "
-        f"WHERE list_contains(?::VARCHAR[], c.concept_class) AND c.status = 'active' "
-        f"UNION SELECT l.linked_vocabulary, l.linked_code, c.vocabulary_id, c.concept_code, "
-        f"c.concept_name FROM (SELECT DISTINCT linked_vocabulary, linked_code FROM xw_links) l "
-        f"JOIN {schema}.relationships r ON r.vocabulary_id_1 = l.linked_vocabulary "
-        f"AND r.concept_code_1 = l.linked_code AND r.predicate = ? "
-        f"JOIN {schema}.concepts c ON c.vocabulary_id = r.vocabulary_id_2 "
-        f"AND c.concept_code = r.concept_code_2 "
-        f"WHERE list_contains(?::VARCHAR[], c.vocabulary_id) "
-        f"AND list_contains(?::VARCHAR[], c.concept_class) AND c.status = 'active'",
-        [classes, predicate, families[0], classes],
-    )
+    # Targets of every linked family concept (identity match + optional predicate walk).
+    class_filter = "list_contains(?::VARCHAR[], c.concept_class) AND " if classes else ""
+    self_params: list[Any] = [classes] if classes else []
+    if predicate is None:
+        con.execute(
+            f"CREATE OR REPLACE TABLE xw_ingredients AS "
+            f"SELECT l.linked_vocabulary, l.linked_code, c.vocabulary_id AS ingredient_vocabulary, "
+            f"c.concept_code AS ingredient_code, c.concept_name AS ingredient_name "
+            f"FROM (SELECT DISTINCT linked_vocabulary, linked_code FROM xw_links) l "
+            f"JOIN {schema}.concepts c ON c.vocabulary_id = l.linked_vocabulary "
+            f"AND c.concept_code = l.linked_code "
+            f"WHERE {class_filter}c.status = 'active'",
+            self_params,
+        )
+    else:
+        walk_params: list[Any] = [
+            *self_params,
+            predicate,
+            families[0],
+            *([classes] if classes else []),
+        ]
+        con.execute(
+            f"CREATE OR REPLACE TABLE xw_ingredients AS "
+            f"SELECT l.linked_vocabulary, l.linked_code, c.vocabulary_id AS ingredient_vocabulary, "
+            f"c.concept_code AS ingredient_code, c.concept_name AS ingredient_name "
+            f"FROM (SELECT DISTINCT linked_vocabulary, linked_code FROM xw_links) l "
+            f"JOIN {schema}.concepts c ON c.vocabulary_id = l.linked_vocabulary "
+            f"AND c.concept_code = l.linked_code "
+            f"WHERE {class_filter}c.status = 'active' "
+            f"UNION SELECT l.linked_vocabulary, l.linked_code, c.vocabulary_id, c.concept_code, "
+            f"c.concept_name FROM (SELECT DISTINCT linked_vocabulary, linked_code FROM xw_links) l "
+            f"JOIN {schema}.relationships r ON r.vocabulary_id_1 = l.linked_vocabulary "
+            f"AND r.concept_code_1 = l.linked_code AND r.predicate = ? "
+            f"JOIN {schema}.concepts c ON c.vocabulary_id = r.vocabulary_id_2 "
+            f"AND c.concept_code = r.concept_code_2 "
+            f"WHERE list_contains(?::VARCHAR[], c.vocabulary_id) "
+            f"AND {class_filter}c.status = 'active'",
+            walk_params,
+        )
     # One output row per input. Lists are built unordered and sorted after
     # aggregation: an ordered aggregate cannot spill to disk.
     con.execute(

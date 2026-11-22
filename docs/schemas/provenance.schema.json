@@ -73,6 +73,179 @@
       "title": "MemoProvenance",
       "type": "object"
     },
+    "ModelCallRecord": {
+      "additionalProperties": false,
+      "description": "Typed provenance record for one language-model call through ModelService (§5.10, G9).",
+      "properties": {
+        "agrees_with_terminology": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agrees With Terminology"
+        },
+        "candidates_shown": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Candidates Shown"
+        },
+        "choice": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Choice"
+        },
+        "declared_relationship": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Declared Relationship"
+        },
+        "declared_semantic_loss": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Declared Semantic Loss",
+          "type": "array"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "from_cache": {
+          "default": false,
+          "title": "From Cache",
+          "type": "boolean"
+        },
+        "model_name": {
+          "minLength": 1,
+          "title": "Model Name",
+          "type": "string"
+        },
+        "model_rationale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Rationale"
+        },
+        "model_requested_review": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Requested Review"
+        },
+        "model_revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Revision"
+        },
+        "operator_id": {
+          "minLength": 1,
+          "title": "Operator Id",
+          "type": "string"
+        },
+        "operator_kind": {
+          "minLength": 1,
+          "title": "Operator Kind",
+          "type": "string"
+        },
+        "prompt_digest": {
+          "minLength": 1,
+          "title": "Prompt Digest",
+          "type": "string"
+        },
+        "prompt_id": {
+          "minLength": 1,
+          "title": "Prompt Id",
+          "type": "string"
+        },
+        "request_digest": {
+          "minLength": 1,
+          "title": "Request Digest",
+          "type": "string"
+        },
+        "task": {
+          "minLength": 1,
+          "title": "Task",
+          "type": "string"
+        },
+        "tier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tier"
+        }
+      },
+      "required": [
+        "operator_id",
+        "operator_kind",
+        "task",
+        "model_name",
+        "prompt_id",
+        "prompt_digest",
+        "request_digest"
+      ],
+      "title": "ModelCallRecord",
+      "type": "object"
+    },
     "ModelProvenance": {
       "additionalProperties": false,
       "description": "The adjudicator that produced the proposal.\n\nPopulated for the deterministic adjudicator too — \"which rules ran\" is as\nmuch a reproducibility question as \"which checkpoint ran\".",
@@ -147,7 +320,7 @@
       "description": "One configured operator in a workflow (v0.2).",
       "properties": {
         "kind": {
-          "description": "Operator kind: transform, retrieve, fuse, propose, validate.",
+          "description": "Operator kind: clean, match, expand, link, resolve, select, check.",
           "title": "Kind",
           "type": "string"
         },
@@ -160,6 +333,12 @@
           "additionalProperties": true,
           "title": "Options",
           "type": "object"
+        },
+        "uses_model": {
+          "default": false,
+          "description": "True when this operator calls a language model (§5.10).",
+          "title": "Uses Model",
+          "type": "boolean"
         },
         "version": {
           "minLength": 1,
@@ -570,6 +749,13 @@
       ],
       "default": null
     },
+    "model_calls": {
+      "items": {
+        "$ref": "#/$defs/ModelCallRecord"
+      },
+      "title": "Model Calls",
+      "type": "array"
+    },
     "package_version": {
       "title": "Package Version",
       "type": "string"
@@ -629,7 +815,7 @@
       "type": "string"
     },
     "schema_version": {
-      "default": "0.3.0",
+      "default": "0.4.0",
       "description": "Version of the BioSemAlign core schema this record conforms to.",
       "title": "Schema Version",
       "type": "string"
@@ -690,5 +876,5 @@
   ],
   "title": "Provenance",
   "type": "object",
-  "x-biosemalign-schema-version": "0.3.0"
+  "x-biosemalign-schema-version": "0.4.0"
 }

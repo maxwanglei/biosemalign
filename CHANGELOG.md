@@ -1,5 +1,140 @@
 # Changelog
 
+## Unreleased — WP7: extension kit and documents
+
+Core schema `0.4.0`. Artifacts serialized under `0.2.0` and `0.3.0` still verify unchanged.
+
+### Added
+
+- Public contract test kit (`biosemalign.testing.contracts` re-exported from `biosemalign.testing`): `check_cleaner_contract`, `check_matcher_contract`, `check_expander_contract`, `check_linker_contract`, `check_resolver_contract`, `check_selector_contract`, `check_check_contract`, `check_target_spec_contract`, `check_domain_pack_contract`, and fixture builders `make_contract_sau`, `make_contract_candidate`, `make_contract_package`, plus verification in `tests/unit/test_extension_kit.py`.
+- Section 6 extension guides under `docs/guides/` covering target specs, local controlled lists, all module operators, model-backed operators and backends, prompts, checks/policy packs, context fields, terminology providers, domain packs, and workflows.
+- Installable example third-party plugin distribution under `examples/pk_pack/` (`biosemalign-pk-pack`) advertising entry-point group `biosemalign.plugins` (`pk = "biosemalign_pk_pack:register"`) with synthetic `ToyPK` target spec, cleaner, check, and profile, tested in CI.
+
+### Changed
+
+- Auto-loaded entry-point plugins (`ensure_plugins_loaded()`) in `biosemalign.modules.registry` (`available`, `build`) and `biosemalign.modules.model` (`available_llm_backends`, `build_llm_backend`).
+- Removed `BioSemAlign.route()` and `BioSemAlign._provenance()` so no alignment decision can be minted outside the kernel (`cli.py:inspect` now runs `BioSemAlign.align_artifact()`).
+
+## Unreleased — WP6: the phenotyping workflow
+
+Core schema `0.4.0`. Artifacts serialized under `0.2.0` and `0.3.0` still verify unchanged.
+
+### Added
+
+- Phenotyping data contracts (`ConceptSetScope`, `ConceptSetMember`, `ConceptSetProposal`, `ConceptSetDecision`, `ConceptSetArtifact`, `MemberReviewAction`, `ConceptSetReview`, `ConceptSet`) in `biosemalign.schemas.phenotyping` and registered in `ROOT_CONTRACTS`.
+- Expand operators `hierarchy` (`HierarchyExpander`, downward `subsumption` + `granularity.via` BFS with optional ancestors/siblings) and `lexical_neighbors` (`LexicalNeighborsExpander`, BM25/trigram neighbors), plus selector `hierarchy` (`HierarchySelector`) registered under `biosemalign.modules.select`.
+- Phenotyping workflow (`PhenotypingWorkflow`, `phenotyping_workflow_from_profile`, `apply_concept_set_review`, `export_concept_set`) in `biosemalign.workflows.phenotyping` enforcing kernel guarantees G2, G4, G5, G7, and G8 (human review required before export; reviewer-added codes verified in terminology and marked `added_by_reviewer=True`).
+- `JudgeMembersReply`, `MemberJudgment`, and `ScriptedModelSelector` in `biosemalign.testing` enforcing M1 (integer-indexed JSON reply forbidding terminology codes), M2 (surfacing model/hierarchy disagreement), M5, M6, and M9.
+- `BioSemAlign.propose_concept_set()`, `BioSemAlign.run()` phenotyping dispatch, interactive `BioSemAlign.expand_code()`, CLI `biosemalign phenotype {propose, review, export, verify}`, and `verify_artifact` support for `ConceptSetArtifact` and `ConceptSet`.
+
+### Changed
+
+- Updated `Selector.select` protocol signature in `biosemalign.modules.base` to accept `ExpansionSet`, and widened `TierConfig.expand` in `biosemalign.profiles.schema` to accept a list of expand operators alongside a single operator.
+
+## Unreleased — WP5: the coding workflow
+
+Core schema `0.4.0`. Artifacts serialized under `0.2.0` and `0.3.0` still verify unchanged.
+
+### Added
+
+- Coding workflow contracts (`CodedConcept`, `CodingTierAttempt`, `CodingArtifact`) registered in `ROOT_CONTRACTS` and verified by `verify_artifact` / `verify_jsonl` / `biosemalign verify`.
+- Per-SAU coding cascade (`CodingTier`, `CodingCascade`, `CodingWorkflow`, `coding_workflow_from_profile`) in `biosemalign.workflows.coding` executing `clean? -> match (-> link, optional)` with G1/G2/M4/M5/M6 guards and model call provenance.
+- `BioSemAlign.run()` dispatching on `profile.workflow`, `BioSemAlign.code_artifact()`, `BioSemAlign.code_all_artifacts()`, and local non-model interactive `BioSemAlign.code_text()`.
+- `--profile` / `-p` option on `biosemalign code`, plus `cleaners` and `profile` options on `code_terms(...)`.
+
+### Changed
+
+- Upgraded DuckDB bulk coding (`CODER_VERSION = "0.2.0"`) with a second cleaning pass for terms uncoded after the exact pass, recording `coding_pass`, `cleaned_by`, and `cleaned_query` on `codes.parquet`, `terms.parquet`, `CodingReport`, and `coding_manifest.json`.
+- Made `TierConfig.link` optional (`OperatorConfig | None`) in Schema 2 profiles so coding tiers can skip annotation linking (`link: null`).
+
+## Unreleased — WP8: model readiness
+
+Core schema `0.4.0`. Artifacts serialized under `0.2.0` and `0.3.0` still verify unchanged.
+
+### Added
+
+- `uses_model: bool` across all `biosemalign.modules.base` operator protocols (`Operator`, `Cleaner`, `Matcher`, `Expander`, `Linker`, `Resolver`, `Selector`, `Check`), recorded on `OperatorProvenance.uses_model`.
+- Model-contribution marks in data contracts (`Mention.retrieval_text_from_model`, `RetrievalEvidence.from_model_suggestion`, `ExpansionMember.from_model_suggestion`, alongside existing `Authority.LLM_INTERNAL_KNOWLEDGE`) and typed `ModelCallRecord` / `Provenance.model_calls`.
+- Single-doorway `ModelService`, `PromptTemplate`, `load_prompt` (with domain overrides and worked-examples digest), `render_declared_context`, `render_numbered_candidates`, and LLM backend registry (`biosemalign.modules.model`).
+- Externalized `choose_candidate.txt` prompt templates: core domain-neutral template in `biosemalign.modules.prompts` and drug-pack wording in `biosemalign.domains.drug.prompts`.
+- `RoutingConfig.allow_model_auto_abstain` (default `False`), `ResearchRunManifest.{model_calls, model_cache_hits}`, `EvaluationReport.model_agreement` (`ModelAgreementMetrics`), and offline scripted test-kit operators (`ScriptedLLMBackend`, `ScriptedModelCleaner`, `ScriptedModelMatcher`, `ScriptedModelExpander`, `ScriptedModelLinker`, `ScriptedModelCheck`) in `biosemalign.testing`.
+
+### Changed
+
+- Refactored `LeashedLLMResolver` (`llm@0.3.0`, `uses_model=True`) to route through `ModelService`, load domain/core `choose_candidate.txt`, replace untyped `extensions["llm"]` with typed `ModelCallRecord`, and route model-declined terms (`candidate=0`) to `HUMAN_REVIEW` by default (M3; `test_declining_every_candidate_abstains` updated to verify both M3 default review routing and `allow_model_auto_abstain=True` opt-in).
+- Updated `DeterministicResolver` (`rules@0.5.0`) to ignore `LLM_INTERNAL_KNOWLEDGE` statements and judge `EXACT` against the original mention when lexical evidence came solely from model suggestions (M4).
+- Bumped `ROUTING_POLICY_VERSION` to `0.3.0` enforcing G10 (`from_model_suggestion` candidates never auto-accepted), and updated kernel/validator to enforce M4–M6 and M2 across all module stages (`clean`, `match`, `expand`, `link`, `resolve`, `check`).
+
+## Unreleased — WP4: keep the most specific code
+
+Core schema `0.4.0`. Artifacts serialized under `0.2.0` and `0.3.0` still verify unchanged.
+
+### Added
+
+- `LexiconStore.incoming_relationships` and `LexiconProvider.candidates_for_codes` for reverse hierarchy/refinement traversal inside vocabulary families.
+- `TargetSpec.refinement` (`RefinementRule`) and RxNorm spec `1.1` rules for refining coarse `BN`/`IN`/`PIN` anchors down to `SBD`/`SCD`/`SCDC` via `strength` and `formulation`.
+- `ExpansionStep`, `ExpansionMember`, `ExpansionSet`, and `RefinementOutcome` (`biosemalign.schemas.expansion`, `biosemalign.schemas.codes`), plus optional `refinement` on `KnowledgePackage`, `AlignmentProposal`, and `AlignmentDecision`.
+- `RefineBySlotsExpander` (`refine_by_slots`) in `biosemalign.modules.expand` and kernel `expand` execution with post-expand G2 relationship policy enforcement.
+
+### Changed
+
+- Always derive `KnowledgePackage.links` (`derive_link_set` never returns `None`), including direct candidate links when concordance was not assessed; `0.4.0` artifacts require non-null `package.links`.
+- Switched `DeterministicResolver` (`rules@0.4.0`), `ConcordantResolver`, and `LeashedLLMResolver` to read pre-derived `package.links` and honor `unique` / `none` / `multiple` `package.refinement` outcomes in selections, fields, and decision rationale.
+- Updated `CHANNEL_PRIORITY` so `ONTOLOGY_NEIGHBORHOOD` ranks ahead of `NORMALIZED_LOOKUP`.
+
+## Unreleased — WP3: context that is used
+
+Core schema `0.4.0`. Artifacts serialized under `0.2.0` and `0.3.0` still verify unchanged.
+
+### Added
+
+- Purpose-scoped `context_view` and kernel `isolated_view` (`biosemalign.input.context`, `biosemalign.kernel`), physically isolating resolvers/selectors to declared `use` fields and excluding `neighboring_fields` and blinded fields.
+- `MentionFidelity` (`verbatim`, `normalized_match`, `not_found`, `unknown`), `Mention.extractor` / `Mention.fidelity`, `canonical_preserved_attributes`, and `SourceType.EXTRACTED_TERMS` with `ExtractedTermsAdapter` and `MENTION_NOT_IN_SOURCE` check (`InputConfig.mention_not_in_source_severity`, defaulting to `warning`).
+- `TaskProfile.effective_context_fields()`, `effective_mapping_key_fields()` (derived from attributes and non-empty `use`), and `effective_blinded_fields()`.
+- Context & multi-table adapter authoring guide in `docs/guides/context-and-adapters.md`.
+
+### Changed
+
+- Removed FAERS-specific column aliases from core `biosemalign.input.context` in favor of domain-pack and profile `context.fields` declarations (`domains/drug/fields.yaml`, `faers_drug_normalization.yaml`).
+- Switched `SAUBuilder`, `assess_readiness`, `DeterministicResolver`, `ConcordantResolver`, `LeashedLLMResolver`, `ExactMatcher`/`LexicalMatcher`/`DenseMatcher`, `PolicyCheck`, and domain semantic checks to read context exclusively via `context_view` / `canonical_preserved_attributes`.
+
+## Unreleased — WP2: domain-free core
+
+Core schema `0.4.0`. Artifacts serialized under `0.2.0` and `0.3.0` still verify unchanged.
+
+### Added
+
+- Dynamic domain/plugin loader (`biosemalign.plugins`: `BUILTIN_DOMAINS`, `load_domain`, `unload_domain`, `without_domain`, `ensure_plugins_loaded`) and separated domain packs under `biosemalign.domains.drug` and `biosemalign.domains.hierarchy`.
+- `KnowledgeStatement.object_class` as the typed replacement for `extensions["target_tty"]`, keeping `extensions["target_tty"]` fallback when verifying legacy artifacts.
+- `TargetSpec` support for identity levels (`via: []` / `level=None`), multi-hop `max_hops`, `subsumption` predicates, and the `ancestor` (`SPECIFICITY`) semantic-loss rule.
+- Provider registry (`biosemalign.knowledge.providers.registry`), lexicon-tool registry, spec/profile-package/domain-field registries, and routing hooks (`register_difficult_pattern_hook`, `register_routing_rule_hook`).
+
+### Changed
+
+- Moved RxNav/drug specs, profiles, `ExtractStrengthCleaner` (`drug.extract_strength`), `RxNavMatcher` (`drug.rxnav`), `ValidateDrugSemantics` (`drug.semantics`), salt routing hooks, `derive_links`, and `import_omop` from core modules into `biosemalign.domains.drug`.
+- Made core defaults domain-free (`TierConfig.match` defaults to `["exact"]`, `TaskProfile.checks` defaults to `[]`, `DeterministicResolver` bumped to `0.3.0` emitting `rules@0.3.0`, `KnowledgeRouter` uses the provider registry and `memo_pins`), with core imports of `domains/` asserted empty in `tests/unit/test_layers.py`.
+
+## Unreleased — WP1: one vocabulary (profile schema 2)
+
+Core schema `0.3.0`. Artifacts serialized under `0.2.0` and `0.3.0` still verify unchanged.
+
+### Changed
+
+- Unified the module and stage vocabularies to `clean`, `match`, `expand`, `link`, `resolve`,
+  `select`, and `check` across `biosemalign.modules`, `biosemalign.kernel`,
+  `biosemalign.workflows`, `biosemalign.api`, and provenance `OperatorProvenance.kind`.
+  Removed legacy `ops/`, `adjudication/`, `coding/`, `linking/`, `resolution/`, and `pipelines/`
+  packages and their aliases.
+- Replaced `knowledge_package`, `reciprocal_rank_fusion`, and `cross_vocab_concordance` /
+  `concordance` linkers with one `standard` linker (`merge: priority | rrf`, `k`, `concordance`,
+  `equivalence_keys`, `conflict_vocabularies`), and replaced `concordant_exact` with one
+  `concordant` resolver using target-neutral pass reasons (`no_target_link`, `non_target_code`).
+- Moved `pass_on` and `pass_on_review_request` escalation from resolvers to `Tier` / `TierConfig`.
+- Introduced profile Schema 2 (`profile_schema: 2`) with `domain`, `workflow`, `target`, `context`,
+  `limits`, `tiers`, and `checks`; updated the packaged `faers_drug_normalization` profile to
+  `0.2.0`. Schema 1 profiles convert in memory with a `DeprecationWarning` and via
+  `biosemalign profiles migrate`.
+
 ## Unreleased — v0.2 development
 
 Core schema `0.3.0`. Records written under `0.2.0` still validate; new fields are optional.

@@ -13,6 +13,7 @@ from biosemalign.schemas.base import (
     ExtensibleModel,
     VersionedModel,
 )
+from biosemalign.schemas.coding import CodedConcept, CodingArtifact, CodingTierAttempt
 from biosemalign.schemas.decision import (
     AlignmentDecision,
     AlignmentProposal,
@@ -26,6 +27,12 @@ from biosemalign.schemas.decision import (
     ValidationResult,
 )
 from biosemalign.schemas.evaluation import GoldMapping
+from biosemalign.schemas.expansion import (
+    ExpansionMember,
+    ExpansionSet,
+    ExpansionStep,
+    RefinementOutcome,
+)
 from biosemalign.schemas.knowledge import (
     CandidateConcept,
     CodingPolicy,
@@ -36,7 +43,18 @@ from biosemalign.schemas.knowledge import (
     RetrievalEvidence,
 )
 from biosemalign.schemas.manifest import ResearchRunManifest
+from biosemalign.schemas.phenotyping import (
+    ConceptSet,
+    ConceptSetArtifact,
+    ConceptSetDecision,
+    ConceptSetMember,
+    ConceptSetProposal,
+    ConceptSetReview,
+    ConceptSetScope,
+    MemberReviewAction,
+)
 from biosemalign.schemas.provenance import (
+    ModelCallRecord,
     ModelProvenance,
     Provenance,
     ResourceProvenance,
@@ -60,6 +78,12 @@ ROOT_CONTRACTS: tuple[type[VersionedModel], ...] = (
     AlignmentProposal,
     AlignmentDecision,
     AlignmentArtifact,
+    CodingArtifact,
+    ConceptSetProposal,
+    ConceptSetDecision,
+    ConceptSetArtifact,
+    ConceptSetReview,
+    ConceptSet,
     BatchAlignmentRecord,
     ResearchRunManifest,
     ReviewArtifact,
@@ -78,21 +102,37 @@ __all__ = [
     "BatchAlignmentRecord",
     "BioSemAlignModel",
     "CandidateConcept",
+    "CodedConcept",
+    "CodingArtifact",
     "CodingPolicy",
+    "CodingTierAttempt",
+    "ConceptSet",
+    "ConceptSetArtifact",
+    "ConceptSetDecision",
+    "ConceptSetMember",
+    "ConceptSetProposal",
+    "ConceptSetReview",
+    "ConceptSetScope",
     "ConceptValidation",
     "ContextEnvelope",
     "ContextualAttributes",
     "Definition",
+    "ExpansionMember",
+    "ExpansionSet",
+    "ExpansionStep",
     "ExtensibleModel",
     "GoldMapping",
     "KnowledgeConflict",
     "KnowledgePackage",
     "KnowledgeStatement",
     "MappingTask",
+    "MemberReviewAction",
     "Mention",
+    "ModelCallRecord",
     "ModelProvenance",
     "Provenance",
     "ReadinessAssessment",
+    "RefinementOutcome",
     "ResearchRunManifest",
     "ResourceProvenance",
     "RetrievalEvidence",

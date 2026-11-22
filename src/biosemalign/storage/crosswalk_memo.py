@@ -22,11 +22,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import Field
+
 from biosemalign.schemas.base import BioSemAlignModel
 from biosemalign.schemas.decision import AlignmentProposal
 from biosemalign.schemas.knowledge import KnowledgePackage
-from biosemalign.schemas.provenance import ModelProvenance, ResolutionTrace
-from biosemalign.schemas.sau import SemanticAlignmentUnit
+from biosemalign.schemas.provenance import ModelCallRecord, ModelProvenance, ResolutionTrace
+from biosemalign.schemas.sau import ContextualAttributes, Mention, SemanticAlignmentUnit
 from biosemalign.storage.paths import reject_symlink_components
 from biosemalign.util import stable_digest
 
@@ -50,6 +52,9 @@ class MemoEntry(BioSemAlignModel):
     proposal: AlignmentProposal
     trace: ResolutionTrace
     model: ModelProvenance | None = None
+    model_calls: list[ModelCallRecord] = Field(default_factory=list)
+    cleaned_mention: Mention | None = None
+    cleaned_attributes: ContextualAttributes | None = None
     run_id: str
     stored_at: datetime
 

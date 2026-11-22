@@ -1,0 +1,47 @@
+profile_schema: 2
+profile_name: toypk_parameter_coding
+profile_version: "0.1.0"
+description: Map synthetic pharmacokinetic parameter strings to ToyPK concepts.
+domain: pk
+workflow: mapping
+
+task:
+  operation: pk_normalization
+  mapping_intent: parameter_level_analysis
+
+target:
+  terminology: ToyPK
+  spec: toypk
+  level: Parameter
+
+knowledge:
+  resources: [ToyPK]
+
+tiers:
+  - name: exact
+    match:
+      - op: exact
+        options:
+          vocabularies: [ToyPK]
+    link:
+      op: standard
+      options:
+        concordance: true
+    resolve:
+      op: rules
+    pass_on: [NO_VALID_MAPPING]
+  - name: cleaned
+    clean:
+      - op: unicode_normalize
+      - op: pk.normalize_parameter
+    match:
+      - op: exact
+        options:
+          vocabularies: [ToyPK]
+    link:
+      op: standard
+    resolve:
+      op: rules
+
+checks:
+  - op: pk.specimen_check

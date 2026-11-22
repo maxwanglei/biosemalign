@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from biosemalign.enums import (
+    Authority,
     ConceptStatus,
     DecisionType,
     LinkKind,
@@ -32,7 +33,7 @@ from biosemalign.schemas.decision import (
 )
 from biosemalign.schemas.knowledge import CandidateConcept, KnowledgePackage
 from biosemalign.schemas.provenance import ResourceProvenance, require_unique_resources
-from biosemalign.schemas.sau import SemanticAlignmentUnit
+from biosemalign.schemas.sau import SemanticAlignmentUnit, canonical_preserved_attributes
 from biosemalign.util import normalize_text, stable_id
 
 __all__ = ["AlignmentArtifact", "BatchAlignmentRecord", "ReviewArtifact"]
@@ -74,20 +75,19 @@ class AlignmentArtifact(VersionedModel):
         _validate_provenance_consistency(self)
         _validate_resolution_trace(self)
         _validate_concordance_fields(self)
-        _validate_links(self)
         if self.decision.source_value != self.sau.source.raw_value:
             raise ValueError("decision source value does not match the SAU source")
         if self.decision.record_id != self.sau.source.record_id:
             raise ValueError("decision record ID does not match the SAU source")
-        canonical_attributes = self.sau.attributes.model_dump(
-            exclude_none=True, exclude={"extensions"}
-        )
+        canonical_attributes = canonical_preserved_attributes(self.sau.attributes)
         if self.decision.preserved_attributes != canonical_attributes:
             raise ValueError("decision preserved attributes do not match the SAU")
 
         if self.validation.status is ValidationStatus.REJECTED:
             if not _is_sanitized_rejection(self):
                 raise ValueError("rejected proposals must be sanitized and routed to review")
+            _validate_links(self)
+            _validate_refinement(self)
             _validate_verdict(self)
             _validate_artifact_id(self)
             return self
@@ -123,6 +123,8 @@ class AlignmentArtifact(VersionedModel):
                 raise ValueError(f"decision {name} does not match the validated proposal")
 
         _validate_canonical_decision_concepts(self)
+        _validate_links(self)
+        _validate_refinement(self)
         _validate_evidence_references(self)
         _validate_routing_features(self)
         _validate_artifact_id(self)
@@ -202,10 +204,13 @@ def _validate_links(artifact: AlignmentArtifact) -> None:
     package = artifact.knowledge_package
     links = package.links
     if links is None:
+        version = _schema_version_tuple(artifact.schema_version)
+        if version is None or version >= (0, 4, 0):
+            raise ValueError("schema 0.4.0 mapping artifacts require package.links")
         return
     if links.granularity != artifact.sau.task.desired_granularity:
         raise ValueError("package links follow a different granularity than the task")
-    from biosemalign.linking.core import derive_link_set
+    from biosemalign.modules.link.targets import derive_link_set
     from biosemalign.targets import builtin_specs
 
     spec = next(
@@ -222,12 +227,16 @@ def _validate_links(artifact: AlignmentArtifact) -> None:
         return
     groups = package.concordance.groups if package.concordance is not None else []
     for link in links.links:
-        pair = {
-            (link.source.vocabulary, link.source.concept_code),
-            (link.via.vocabulary, link.via.concept_code),
-        }
-        if not any(pair <= {(m.vocabulary, m.concept_code) for m in g.members} for g in groups):
-            raise ValueError("a package link joins codes no equivalence group joins")
+        if (link.source.vocabulary, link.source.concept_code) != (
+            link.via.vocabulary,
+            link.via.concept_code,
+        ):
+            pair = {
+                (link.source.vocabulary, link.source.concept_code),
+                (link.via.vocabulary, link.via.concept_code),
+            }
+            if not any(pair <= {(m.vocabulary, m.concept_code) for m in g.members} for g in groups):
+                raise ValueError("a package link joins codes no equivalence group joins")
         via = package.candidate_by_qualified_id(link.via.vocabulary, link.via.concept_code)
         if via is None:
             raise ValueError("a package link routes through a concept absent from the package")
@@ -239,12 +248,37 @@ def _validate_links(artifact: AlignmentArtifact) -> None:
                 raise ValueError("an equivalence link must lead to its route concept")
             continue
         if not any(
-            statement.predicate in link.predicates
+            statement.authority is not Authority.LLM_INTERNAL_KNOWLEDGE
+            and statement.predicate in link.predicates
             and (statement.object_vocabulary or via.vocabulary) == link.target.vocabulary
             and statement.object_id == link.target.concept_code
             for statement in via.relationships
         ):
-            raise ValueError("a projection link rests on an edge absent from the package")
+            raise ValueError(
+                "package links contain a projection link resting on an edge absent from the package"
+            )
+
+
+def _validate_refinement(artifact: AlignmentArtifact) -> None:
+    """Keep decision refinement consistent with bounded package refinement evidence."""
+    pkg_ref = artifact.knowledge_package.refinement
+    dec_ref = artifact.decision.refinement
+    if artifact.validation.status is ValidationStatus.REJECTED:
+        if dec_ref is not None:
+            raise ValueError("rejected proposals must not carry decision refinement")
+        return
+    if dec_ref != pkg_ref:
+        raise ValueError("decision refinement does not match package refinement")
+    if (
+        pkg_ref is not None
+        and pkg_ref.status == "unique"
+        and pkg_ref.selected is not None
+        and artifact.knowledge_package.candidate_by_qualified_id(
+            pkg_ref.selected.vocabulary, pkg_ref.selected.concept_code
+        )
+        is None
+    ):
+        raise ValueError("unique refinement selection is absent from the knowledge package")
 
 
 def _validate_resolution_trace(artifact: AlignmentArtifact) -> None:
@@ -318,6 +352,7 @@ def _is_sanitized_rejection(artifact: AlignmentArtifact) -> bool:
         and not decision.evidence_references
         and decision.rationale is None
         and decision.routing_status is RoutingStatus.HUMAN_REVIEW
+        and decision.refinement is None
         and decision.routing_features == expected_features
         and decision.routing_reasons == expected_reasons
     )
@@ -459,11 +494,42 @@ _FIELDS_ADDED_IN_0_3_0: tuple[tuple[str, ...], ...] = (
 )
 
 
+#: Optional fields added to nested contracts in schema 0.4.0.
+_FIELDS_ADDED_IN_0_4_0: tuple[tuple[str, ...], ...] = (
+    ("sau", "mention", "extractor"),
+    ("sau", "mention", "fidelity"),
+    ("sau", "mention", "retrieval_text_from_model"),
+    ("knowledge_package", "candidates", "*", "relationships", "*", "object_class"),
+    ("knowledge_package", "candidates", "*", "retrieval_evidence", "*", "from_model_suggestion"),
+    ("knowledge_package", "ontology_guidance", "*", "object_class"),
+    ("knowledge_package", "umls_guidance", "*", "object_class"),
+    ("knowledge_package", "kg_guidance", "*", "object_class"),
+    ("knowledge_package", "conflicts", "*", "statements", "*", "object_class"),
+    ("knowledge_package", "refinement"),
+    ("proposal", "refinement"),
+    ("decision", "refinement"),
+    ("sau", "provenance", "workflow", "tiers", "*", "operators", "*", "uses_model"),
+    ("sau", "provenance", "workflow", "validators", "*", "uses_model"),
+    ("sau", "provenance", "model_calls"),
+    ("decision", "provenance", "workflow", "tiers", "*", "operators", "*", "uses_model"),
+    ("decision", "provenance", "workflow", "validators", "*", "uses_model"),
+    ("decision", "provenance", "model_calls"),
+)
+
+
 def _schema_version_tuple(version: str) -> tuple[int, ...] | None:
     try:
         return tuple(int(part) for part in version.split("."))
     except ValueError:
         return None
+
+
+def _is_empty_default(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value is False
+    return value == [] or value == {}
 
 
 def _drop_default(node: Any, path: tuple[str, ...]) -> None:
@@ -473,7 +539,7 @@ def _drop_default(node: Any, path: tuple[str, ...]) -> None:
             _drop_default(item, tuple(rest))
     elif isinstance(node, dict):
         if not rest:
-            if node.get(head) in (None, [], {}):
+            if head in node and _is_empty_default(node[head]):
                 node.pop(head, None)
         elif head in node:
             _drop_default(node[head], tuple(rest))
@@ -489,6 +555,9 @@ def _validate_artifact_id(artifact: AlignmentArtifact) -> None:
         "decision": artifact.decision.model_dump(mode="json"),
     }
     version = _schema_version_tuple(artifact.schema_version)
+    if version is not None and version < (0, 4, 0):
+        for path in _FIELDS_ADDED_IN_0_4_0:
+            _drop_default(payload, path)
     if version is not None and version < (0, 3, 0):
         for path in _FIELDS_ADDED_IN_0_3_0:
             _drop_default(payload, path)

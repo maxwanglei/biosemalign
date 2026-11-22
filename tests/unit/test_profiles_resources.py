@@ -9,14 +9,15 @@ from pydantic import ValidationError
 from biosemalign.enums import MentionMode, RelationshipType
 from biosemalign.exceptions import ConfigurationError, ProfileError, ResourceNotPermitted
 from biosemalign.profiles.loader import available_profiles, load_profile, load_profile_file
+from biosemalign.profiles.migrate import migrate_profile_yaml
 from biosemalign.profiles.schema import (
-    AdjudicationConfig,
+    ContextConfig,
+    ContextFieldConfig,
     InputConfig,
     KnowledgeConfig,
-    RetrievalConfig,
+    LimitsConfig,
     RoutingConfig,
     TaskProfile,
-    ValidationConfig,
 )
 from biosemalign.resources.registry import (
     DeploymentEnvironment,
@@ -29,7 +30,8 @@ from biosemalign.settings import reset_settings_cache
 
 def test_packaged_profile_and_predicate_policy():
     profile = load_profile("faers_drug_normalization")
-    assert profile.task.desired_granularity == "ingredient"
+    assert profile.profile_schema == 2
+    assert profile.target.level == "ingredient"
     assert profile.input.mention_mode is MentionMode.USER_SPECIFIED
     assert profile.knowledge.permits("has_ingredient")
     assert not profile.knowledge.permits("may_treat")
@@ -38,28 +40,38 @@ def test_packaged_profile_and_predicate_policy():
     assert not profile.permits_relation(RelationshipType.RELATED_NOT_EQUIVALENT)
     assert KnowledgeConfig().permits("custom")
     assert not KnowledgeConfig(prohibited_relationships=["custom"]).permits("custom")
-    profile.adjudication.relation_types = []
+    profile.task.relation_types = []
     assert profile.permits_relation(RelationshipType.EXACT)
+    custom_key = ContextFieldConfig(name="matrix", use=["key"])
+    assert custom_key.use == ["key"]
 
 
 @pytest.mark.parametrize(
     ("model", "values", "message"),
     [
-        (InputConfig, {"mapping_key_context": ["route", "route"]}, "duplicate"),
-        (InputConfig, {"mapping_key_context": ["record_id"]}, "occurrence-only"),
-        (InputConfig, {"mapping_key_context": ["typo"]}, "unknown canonical"),
+        (
+            ContextConfig,
+            {"fields": [{"name": "route"}, {"name": "route"}]},
+            "duplicate",
+        ),
+        (
+            ContextFieldConfig,
+            {"name": "record_id", "use": ["key"]},
+            "occurrence-only",
+        ),
+        (
+            ContextFieldConfig,
+            {"name": "secret_outcome", "blinded": True, "use": ["resolve"]},
+            "cannot list",
+        ),
         (InputConfig, {"automatic_mention_detection": True}, "not implemented"),
         (
             KnowledgeConfig,
             {"allowed_relationships": ["x"], "prohibited_relationships": ["x"]},
             "both",
         ),
-        (RetrievalConfig, {"lexical_retrieval": True}, "not implemented"),
-        (RetrievalConfig, {"embedding_retrieval": True}, "not implemented"),
-        (AdjudicationConfig, {"candidate_constrained": False}, "bounded"),
-        (ValidationConfig, {"prohibit_unretrieved_identifiers": False}, "bounded"),
         (RoutingConfig, {"rejection_lexical_similarity": 0.9}, "must not exceed"),
-        (RetrievalConfig, {"maximum_candidates": 0}, "greater than or equal"),
+        (LimitsConfig, {"candidates": 0}, "greater than or equal"),
     ],
 )
 def test_invalid_policy_is_rejected(model, values, message):
@@ -69,7 +81,7 @@ def test_invalid_policy_is_rejected(model, values, message):
 
 def test_profile_target_must_be_retrievable():
     payload = load_profile("faers_drug_normalization").model_dump()
-    payload["task"]["target_terminology"] = "OtherVocabulary"
+    payload["target"]["terminology"] = "OtherVocabulary"
     with pytest.raises(ValidationError, match="not among"):
         TaskProfile.model_validate(payload)
 
@@ -92,6 +104,69 @@ def test_profile_discovery_precedence(tmp_path, monkeypatch):
     with pytest.raises(ProfileError, match="unknown profile"):
         load_profile("does_not_exist")
     reset_settings_cache()
+
+
+def test_schema_1_profile_loads_with_deprecation_warning_and_migrates(tmp_path: Path):
+    schema_1 = """
+profile_name: legacy_drug
+profile_version: 0.1.0
+task:
+  operation: drug_normalization
+  mapping_intent: ingredient_level_analysis
+  target_terminology: RxNorm
+  desired_granularity: ingredient
+input:
+  required_context: [route]
+  optional_context: [dose, indication]
+  mapping_key_context: [route, dose]
+knowledge:
+  primary_resources: [RxNorm]
+  secondary_resources: [UNII]
+  blinded_context_fields: [indication]
+  allowed_relationships: [has_ingredient]
+retrieval:
+  maximum_candidates: 7
+adjudication:
+  backend: vllm
+  temperature: 0.2
+  llm_max_candidates: 12
+  relation_types: [EXACT, UNSUPPORTED_MAPPING]
+validation:
+  preserve_combination_ingredients: false
+"""
+    path = tmp_path / "legacy.yaml"
+    path.write_text(schema_1, encoding="utf-8")
+    with pytest.warns(DeprecationWarning, match="Schema 1"):
+        profile = load_profile_file(path)
+    assert profile.profile_schema == 2
+    assert profile.domain == "drug"
+    assert profile.target.terminology == "RxNorm"
+    assert profile.target.level == "ingredient"
+    assert profile.knowledge.resources == ["RxNorm", "UNII"]
+    assert profile.limits.candidates == 7
+    assert profile.context.required_context == ["route"]
+    assert profile.context.blinded_fields == ["indication"]
+    assert profile.context.mapping_key_context == ["route", "dose"]
+    assert profile.tiers is not None and len(profile.tiers) == 1
+    assert profile.tiers[0].resolve is not None
+    assert profile.tiers[0].resolve.op == "llm"
+    assert profile.tiers[0].resolve.options == {"temperature": 0.2, "max_candidates": 12}
+    assert profile.checks[0].op == "drug.semantics"
+    assert profile.checks[0].options["preserve_combination_ingredients"] is False
+
+    migrated = yaml.safe_load(migrate_profile_yaml(schema_1))
+    assert migrated["profile_schema"] == 2
+    assert TaskProfile.model_validate(migrated) == profile
+
+    bad_path = tmp_path / "bad_s1.yaml"
+    bad_path.write_text(
+        schema_1 + "  lexical_retrieval: true\n" if "retrieval:" in schema_1 else schema_1,
+        encoding="utf-8",
+    )
+    bad_yaml = schema_1.replace("maximum_candidates: 7", "lexical_retrieval: true")
+    bad_path.write_text(bad_yaml, encoding="utf-8")
+    with pytest.warns(DeprecationWarning), pytest.raises(ProfileError, match="cannot be migrated"):
+        load_profile_file(bad_path)
 
 
 @pytest.mark.parametrize(

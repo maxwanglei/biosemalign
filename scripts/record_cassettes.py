@@ -61,8 +61,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     from biosemalign import BioSemAlign
+    from biosemalign.domains.drug.providers.rxnav import RxNavProvider
     from biosemalign.enums import EgressDataClass, ResourceMode
-    from biosemalign.knowledge.providers.rxnorm import RxNavProvider
     from biosemalign.settings import Settings
     from biosemalign.storage.cache import ResponseCache
 

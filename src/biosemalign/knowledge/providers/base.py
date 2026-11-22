@@ -73,6 +73,10 @@ class KnowledgeProvider(Protocol):
         """Check that an identifier exists and report its lifecycle status."""
         ...
 
+    def available_predicates(self) -> frozenset[str]:
+        """Predicates this provider is able to serve via ``get_relationships``."""
+        ...
+
 
 class RateLimiter:
     """Minimal request spacer.

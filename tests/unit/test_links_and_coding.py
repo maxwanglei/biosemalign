@@ -31,7 +31,7 @@ from typer.testing import CliRunner
 
 from biosemalign import BioSemAlign, verify_artifact
 from biosemalign.cli import app
-from biosemalign.coding import code_terms, term_key
+from biosemalign.domains.drug.tools.links import LINK_OVERLAYS, LinkReport, derive_links
 from biosemalign.enums import (
     ConcordanceState,
     DecisionType,
@@ -40,16 +40,16 @@ from biosemalign.enums import (
     SemanticLossKind,
 )
 from biosemalign.exceptions import LexiconError
-from biosemalign.knowledge.concordance import assess_concordance
 from biosemalign.knowledge.lexicon.audit import audit_bundle
 from biosemalign.knowledge.lexicon.build import build_lexicon, load_declaration
 from biosemalign.knowledge.lexicon.contract import LexiconDeclaration, LexiconManifest
-from biosemalign.knowledge.lexicon.links import LINK_OVERLAYS, LinkReport, derive_links
 from biosemalign.knowledge.providers.lexicon import LexiconStore
+from biosemalign.modules.link.concordance import assess_concordance
 from biosemalign.profiles.loader import load_profile
 from biosemalign.profiles.schema import TaskProfile
 from biosemalign.schemas.knowledge import CandidateConcept, RetrievalEvidence
 from biosemalign.storage.parquet import decision_to_row
+from biosemalign.workflows.coding import code_terms, term_key
 
 # -- fixtures -------------------------------------------------------------------
 
@@ -114,38 +114,31 @@ def step1_profile(
     *, conflict_vocabularies: list[str] | None = None, source_terminologies: list[str] = ()
 ) -> TaskProfile:
     payload = load_profile("faers_drug_normalization").model_dump(mode="json")
-    payload["task"]["source_terminologies"] = list(source_terminologies)
-    payload["knowledge"]["secondary_resources"] = [v for v in STEP1_VOCABULARIES if v != "RxNorm"]
-    fuser: dict[str, Any] = {"op": "cross_vocab_concordance"}
+    payload["target"]["source_terminologies"] = list(source_terminologies)
+    payload["knowledge"]["resources"] = list(STEP1_VOCABULARIES)
+    link_options: dict[str, Any] = {"concordance": True}
     if conflict_vocabularies is not None:
-        fuser["options"] = {"conflict_vocabularies": conflict_vocabularies}
-    payload["workflow"] = {
-        "tiers": [
-            {
-                "name": "step1",
-                "retrievers": [
-                    {
-                        "op": "lexicon",
-                        "options": {"vocabularies": STEP1_VOCABULARIES, "methods": ["exact"]},
-                    }
-                ],
-                "fuser": fuser,
-                "proposer": {
-                    "op": "concordant_exact",
-                    "options": {"authority_sources": ["RxNorm", "RxNorm Extension"]},
-                },
+        link_options["conflict_vocabularies"] = conflict_vocabularies
+    payload["tiers"] = [
+        {
+            "name": "step1",
+            "match": [{"op": "exact", "options": {"vocabularies": STEP1_VOCABULARIES}}],
+            "link": {"op": "standard", "options": link_options},
+            "resolve": {
+                "op": "concordant",
+                "options": {"authority_sources": ["RxNorm", "RxNorm Extension"]},
             },
-            {
-                "name": "fallback",
-                "retrievers": [
-                    {
-                        "op": "lexicon",
-                        "options": {"vocabularies": ["RxNorm"], "methods": ["exact", "bm25"]},
-                    }
-                ],
-            },
-        ]
-    }
+        },
+        {
+            "name": "fallback",
+            "match": [{"op": "exact", "options": {"vocabularies": ["RxNorm"]}}],
+            "pass_on": ["NO_VALID_MAPPING"],
+        },
+        {
+            "name": "fallback_lexical",
+            "match": [{"op": "lexical", "options": {"vocabularies": ["RxNorm"], "method": "bm25"}}],
+        },
+    ]
     return TaskProfile.model_validate(payload)
 
 
@@ -482,7 +475,7 @@ def test_the_strict_conflict_rule_still_holds_by_default(
 def test_an_identity_without_an_ingredient_link_passes_on(step1: BioSemAlign) -> None:
     artifact = step1.align_artifact(step1.make_request("Lonebrand"))
     attempt = _attempt(artifact)
-    assert attempt.reason == "no_ingredient_link"
+    assert attempt.reason == "no_target_link"
     assert "RxNorm:44 (BN, 'Lonebrand')" in attempt.detail
     assert artifact.decision.provenance.resolution.resolved_by_tier == "fallback"
     assert verify_artifact(artifact).valid
@@ -504,7 +497,7 @@ def test_rxnorm_extension_identities_must_reach_rxnorm_ingredients(
     assert row["source_level_id"] == "OMOP900" and row["selected_ids"] == "10"
 
     foreign = step1.align_artifact(step1.make_request("Deltabrand"))
-    assert _attempt(foreign).reason == "non_target_ingredient"
+    assert _attempt(foreign).reason == "non_target_code"
     assert "RxNorm Extension:OMOP902" in _attempt(foreign).detail
 
     # Unless the profile permits RxNorm Extension as a source, it is not an identity.
@@ -650,7 +643,7 @@ def test_coding_matches_the_step1_tier_exactly(
         coded.setdefault(normalized, set()).add((vocabulary, code))
     for name in names:
         sau = step1.build_sau(step1.make_request(name))[0]
-        package = step1.retrieve_knowledge(sau)
+        package = step1.build_package(sau)
         matched = {
             (m.vocabulary, m.concept_code)
             for group in package.concordance.groups
@@ -817,7 +810,7 @@ def test_typo_and_collision_names_keep_their_codes_in_the_lexicon_cascade(
 
 
 def test_omop_import_declares_the_rxnorm_family(tmp_path: Path) -> None:
-    from biosemalign.knowledge.lexicon.omop import import_omop
+    from biosemalign.domains.drug.tools.omop import import_omop
 
     athena = write_athena(tmp_path / "athena")
     import_omop(athena, tmp_path / "both", vocabularies=["RxNorm", "RxNorm Extension"])

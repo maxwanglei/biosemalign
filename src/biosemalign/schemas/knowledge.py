@@ -8,7 +8,7 @@ from pydantic import Field, field_validator
 
 from biosemalign.enums import Authority, ConceptStatus, ConcordanceState, RetrievalChannel
 from biosemalign.schemas.base import BioSemAlignModel, ExtensibleModel, VersionedModel
-from biosemalign.schemas.codes import EquivalenceGroup, QualifiedCode
+from biosemalign.schemas.codes import EquivalenceGroup, QualifiedCode, RefinementOutcome
 from biosemalign.schemas.links import LinkSet
 from biosemalign.schemas.provenance import ResourceProvenance, require_unique_resources
 
@@ -27,6 +27,7 @@ __all__ = [
     "KnowledgeStatement",
     "QualifiedCode",
     "RetrievalEvidence",
+    "statement_object_class",
 ]
 
 
@@ -64,6 +65,13 @@ class RetrievalEvidence(BioSemAlignModel):
             "than a match against RXNORM itself and must stay distinguishable."
         ),
     )
+    from_model_suggestion: bool = Field(
+        default=False,
+        description=(
+            "True when found via model-written query text or a model-backed matcher/expander "
+            "suggestion (M4, G10)."
+        ),
+    )
 
 
 class KnowledgeStatement(ExtensibleModel):
@@ -78,6 +86,10 @@ class KnowledgeStatement(ExtensibleModel):
             "Vocabulary of the object when it differs from the subject's, e.g. an "
             "RxNorm ingredient of an RxNorm Extension product; None means the same."
         ),
+    )
+    object_class: str | None = Field(
+        default=None,
+        description="Concept class of the object, e.g. 'IN', 'PIN', or 'Group'.",
     )
     subject_label: str | None = None
     object_label: str | None = None
@@ -138,8 +150,12 @@ class CandidateConcept(ExtensibleModel):
         return {e.channel for e in self.retrieval_evidence}
 
     def related_ids(self, predicate: str) -> list[str]:
-        """Object identifiers of relationships with the given predicate."""
-        return [s.object_id for s in self.relationships if s.predicate == predicate]
+        """Object identifiers of non-model relationships with the given predicate."""
+        return [
+            s.object_id
+            for s in self.relationships
+            if s.predicate == predicate and s.authority is not Authority.LLM_INTERNAL_KNOWLEDGE
+        ]
 
 
 class ConceptEvidence(BioSemAlignModel):
@@ -208,9 +224,13 @@ class KnowledgePackage(VersionedModel):
     links: LinkSet | None = Field(
         default=None,
         description=(
-            "Each exact match's links to target codes at the requested granularity, derived "
-            "by the kernel from this package (v0.3); None when concordance was not assessed."
+            "Each matched code's or candidate's links to target codes at the requested "
+            "granularity, derived by the kernel from this package."
         ),
+    )
+    refinement: RefinementOutcome | None = Field(
+        default=None,
+        description="Slot-based refinement outcome recorded when expand runs.",
     )
 
     @field_validator("resource_provenance")
@@ -275,6 +295,8 @@ class KnowledgePackage(VersionedModel):
         for candidate in self.candidates:
             for statement in candidate.relationships:
                 if statement.subject_id != candidate.candidate_id:
+                    continue
+                if statement.authority is Authority.LLM_INTERNAL_KNOWLEDGE:
                     continue
                 object_vocabulary = statement.object_vocabulary or candidate.vocabulary
                 key = (object_vocabulary.casefold(), statement.object_id)
@@ -352,14 +374,21 @@ class KnowledgePackage(VersionedModel):
         )
 
 
+def statement_object_class(statement: KnowledgeStatement) -> str | None:
+    """Return the object concept class, falling back to legacy ``extensions['target_tty']``."""
+    if statement.object_class is not None:
+        return statement.object_class
+    value = statement.extensions.get("target_tty")
+    return str(value) if value is not None else None
+
+
 def _target_concept_class(candidate: CandidateConcept, statement: KnowledgeStatement) -> str | None:
     spec = _release_bound_spec(candidate, statement)
     if spec is not None:
         inferred = spec.inferred_class(statement.predicate)
         if inferred is not None:
             return inferred
-    value = statement.extensions.get("target_tty")
-    return str(value) if value is not None else None
+    return statement_object_class(statement)
 
 
 def _release_bound_spec(

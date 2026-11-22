@@ -21,8 +21,10 @@ from typing import Any, Literal
 import yaml
 from pydantic import Field, field_validator, model_validator
 
-from biosemalign.enums import ErrorCategory, RelationshipType, Severity
+from biosemalign.enums import Authority, ErrorCategory, RelationshipType, Severity
 from biosemalign.exceptions import ConfigurationError
+from biosemalign.input.context import context_view
+from biosemalign.profiles.schema import TaskProfile
 from biosemalign.schemas.base import BioSemAlignModel
 from biosemalign.schemas.decision import AlignmentProposal, SelectedConcept, ValidationFinding
 from biosemalign.schemas.knowledge import KnowledgePackage
@@ -34,8 +36,8 @@ __all__ = [
     "CategoryTagRule",
     "ConceptSelector",
     "ContextCompatibilityRule",
+    "PolicyCheck",
     "PolicyPack",
-    "PolicyValidateOp",
     "PreserveDistinctionRule",
     "load_policy_pack",
 ]
@@ -197,21 +199,29 @@ def load_policy_pack(source: str | Path | dict[str, Any]) -> PolicyPack:
         raise ConfigurationError(f"invalid policy pack: {exc}") from exc
 
 
-class PolicyValidateOp:
+class PolicyCheck:
     """Apply a policy pack after the mandatory terminology checks."""
 
     op_id = "policy"
+    uses_model = False
 
-    def __init__(self, pack: PolicyPack, *, target_terminology: str) -> None:
+    def __init__(
+        self,
+        pack: PolicyPack,
+        *,
+        target_terminology: str,
+        profile: TaskProfile | None = None,
+    ) -> None:
         self.pack = pack
         self.target = target_terminology
+        self.profile = profile
         self.version = f"{POLICY_DSL_VERSION}:{pack.policy_id}@{pack.policy_version}#{pack.digest}"
 
     @property
     def options(self) -> dict[str, Any]:
         return {"policy_id": self.pack.policy_id, "policy_version": self.pack.policy_version}
 
-    def validate(
+    def check(
         self,
         proposal: AlignmentProposal,
         package: KnowledgePackage,
@@ -233,9 +243,10 @@ class PolicyValidateOp:
                     statement.object_label or statement.object_id
                     for statement in candidate.relationships
                     if statement.predicate == "has_dose_form"
+                    and statement.authority is not Authority.LLM_INTERNAL_KNOWLEDGE
                 )
             for context_rule in self.pack.context_compatibility_rules:
-                value = _context_value(sau, context_rule.context_field)
+                value = _context_value(sau, context_rule.context_field, self.profile)
                 if value is None or not re.search(
                     context_rule.context_pattern, value, re.IGNORECASE
                 ):
@@ -255,7 +266,12 @@ class PolicyValidateOp:
         return findings
 
 
-def _context_value(sau: SemanticAlignmentUnit, field: str) -> str | None:
+def _context_value(
+    sau: SemanticAlignmentUnit, field: str, profile: TaskProfile | None = None
+) -> str | None:
+    if profile is not None:
+        value = context_view(sau, "check", profile).get(field)
+        return str(value) if value not in (None, "") else None
     for container in (sau.attributes, sau.context):
         value = getattr(container, field, None)
         if isinstance(value, str) and value:

@@ -1,9 +1,10 @@
-"""Target terminology specs: built-ins, loading, and lookup (v0.3).
+"""Target terminology specs: built-ins, loading, and lookup (v0.4).
 
 A profile names its target spec — a built-in id such as ``rxnorm``, or a path
 to a YAML file — or leaves it to be found by its target terminology. A
-terminology with no spec gets an empty one: no granularity is reachable, so
-deterministic projection abstains rather than guessing.
+terminology with no spec gets an empty one: identity mapping works; named levels
+require a spec. Built-in domain packs register their specs via
+:func:`register_target_spec`.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from pathlib import Path
 import yaml
 
 from biosemalign.exceptions import ProfileError
+from biosemalign.plugins import ensure_plugins_loaded
 from biosemalign.targets.spec import GranularitySpec, LossRule, SaltSpec, TargetSpec
 
 __all__ = [
@@ -24,28 +26,44 @@ __all__ = [
     "TargetSpec",
     "builtin_specs",
     "load_target_spec",
+    "register_target_spec",
     "spec_for_vocabulary",
+    "unregister_target_spec",
 ]
 
 _PACKAGE = "biosemalign.targets"
+_REGISTERED_SPECS: dict[str, TargetSpec] = {}
+
+
+def register_target_spec(spec: TargetSpec) -> None:
+    """Register a target spec so profiles may reference it by ``spec_id``."""
+    _REGISTERED_SPECS[spec.spec_id] = spec
+    builtin_specs.cache_clear()
+
+
+def unregister_target_spec(spec_id: str) -> None:
+    """Remove a registered target spec, if present."""
+    _REGISTERED_SPECS.pop(spec_id, None)
+    builtin_specs.cache_clear()
 
 
 @lru_cache(maxsize=1)
 def builtin_specs() -> dict[str, TargetSpec]:
-    """Every spec shipped with BioSemAlign, by id."""
-    specs: dict[str, TargetSpec] = {}
+    """Every target spec registered by core or loaded plugins, by id."""
+    ensure_plugins_loaded()
+    specs = dict(_REGISTERED_SPECS)
     for entry in resources.files(_PACKAGE).iterdir():
         if entry.name.endswith(".yaml"):
             spec = _parse(entry.read_text(encoding="utf-8"), origin=entry.name)
-            specs[spec.spec_id] = spec
+            specs.setdefault(spec.spec_id, spec)
     return specs
 
 
 def load_target_spec(reference: str | Path | None, *, terminology: str) -> TargetSpec:
-    """The spec a profile names, or the built-in one for its terminology.
+    """The spec a profile names, or the registered one for its terminology.
 
-    ``reference`` is a built-in id or a path to a YAML file; None selects the
-    built-in spec whose target is ``terminology``.
+    ``reference`` is a built-in/registered id or a path to a YAML file; None
+    selects the registered spec whose target is ``terminology``.
     """
     if reference is None:
         return _for_terminology(terminology)
@@ -62,7 +80,7 @@ def load_target_spec(reference: str | Path | None, *, terminology: str) -> Targe
 
 
 def spec_for_vocabulary(vocabulary: str | None) -> TargetSpec | None:
-    """The built-in spec whose family includes ``vocabulary``, if any."""
+    """The registered spec whose family includes ``vocabulary``, if any."""
     if vocabulary is None:
         return None
     return next((s for s in builtin_specs().values() if s.in_family(vocabulary)), None)
@@ -73,7 +91,6 @@ def _load_file(path: str) -> TargetSpec:
     return _parse(Path(path).read_text(encoding="utf-8"), origin=path)
 
 
-@lru_cache(maxsize=32)
 def _for_terminology(terminology: str) -> TargetSpec:
     wanted = terminology.casefold()
     for spec in builtin_specs().values():

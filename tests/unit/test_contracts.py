@@ -145,7 +145,7 @@ def test_schema_export_is_deterministic_and_check_fails_for_missing_or_stale(tmp
     assert main(["--output-dir", str(tmp_path), "--check"]) == 1
     assert "out of date" in capsys.readouterr().err
     paths = export_schemas(tmp_path)
-    assert len(paths) == len(ROOT_CONTRACTS) == 12
+    assert len(paths) == len(ROOT_CONTRACTS) == 18
     for path in paths:
         payload = json.loads(path.read_text())
         assert payload["$schema"].endswith("2020-12/schema")
@@ -288,11 +288,16 @@ def test_artifact_warning_requires_review_even_when_json_is_valid(artifact):
 
 
 def test_invalid_selection_is_preserved_only_in_rejected_proposal(tmp_path):
-    class InvalidAdjudicator:
+    class InvalidResolver:
+        op_id = "invalid"
+        version = "0.1"
+        uses_model = False
+        requires_network = False
+
         def provenance(self):
             return ModelProvenance(backend="mock")
 
-        def adjudicate(self, sau, package):
+        def resolve(self, sau, package):
             selected = SelectedConcept(
                 concept_id="never-retrieved", label="invented", vocabulary="RxNorm"
             )
@@ -303,7 +308,7 @@ def test_invalid_selection_is_preserved_only_in_rejected_proposal(tmp_path):
                 relationship_to_source=RelationshipType.EXACT,
             )
 
-    with make_pipeline(tmp_path / "rejected", adjudicator=InvalidAdjudicator()) as pipeline:
+    with make_pipeline(tmp_path / "rejected", resolver=InvalidResolver()) as pipeline:
         rejected = pipeline.align_artifact(pipeline.make_request(ALPHA))
     assert rejected.validation.status is ValidationStatus.REJECTED
     assert rejected.proposal.selected_concepts[0].concept_id == "never-retrieved"

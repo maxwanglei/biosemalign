@@ -42,15 +42,18 @@ jobs:
       - name: Install
         run: python -m pip install -c constraints.txt -e ".[dev,data]"
 
+      - name: Install example external pack
+        run: python -m pip install -c constraints.txt --no-deps ./examples/pk_pack
+
       - name: Lint
         if: matrix.python-version == '3.12'
         run: |
-          ruff check src tests scripts
-          ruff format --check src tests scripts
+          ruff check src tests scripts examples/pk_pack
+          ruff format --check src tests scripts examples/pk_pack
 
       - name: Type check
         if: matrix.python-version == '3.12'
-        run: mypy src
+        run: mypy src examples/pk_pack/src
 
       - name: Schemas are current
         if: matrix.python-version == '3.12'
@@ -60,11 +63,11 @@ jobs:
 
       - name: Test with branch coverage gate
         if: matrix.python-version == '3.12'
-        run: pytest --cov=biosemalign --cov-report=term-missing
+        run: pytest tests examples/pk_pack/tests --cov=biosemalign --cov-report=term-missing
 
       - name: Test supported Python
         if: matrix.python-version != '3.12'
-        run: pytest
+        run: pytest tests examples/pk_pack/tests
 
   distribution:
     # Build exactly what will be published, inspect both archives, then install
@@ -91,10 +94,11 @@ jobs:
       - name: Smoke-test wheel
         run: |
           python -m pip install -c constraints.txt dist/*.whl
+          python -m pip install -c constraints.txt --no-deps ./examples/pk_pack
           cd /tmp
           biosemalign version
           biosemalign profiles
-          python -c "from biosemalign.profiles import available_profiles; assert 'faers_drug_normalization' in available_profiles()"
+          python -c "from biosemalign.profiles import available_profiles; avail = available_profiles(); assert 'faers_drug_normalization' in avail and 'toypk_parameter_coding' in avail"
 
       - name: Verify external typing marker
         run: |

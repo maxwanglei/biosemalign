@@ -1,0 +1,11 @@
+fields:
+  - name: specimen
+    aliases: [matrix, bio_matrix]
+    kind: attribute
+    use: [key, clean, resolve, check]
+    required: false
+  - name: study_arm
+    kind: context
+    use: []
+    required: false
+    blinded: true

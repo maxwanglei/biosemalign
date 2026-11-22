@@ -1,5 +1,8 @@
+profile_schema: 2
 profile_name: step1_mprint
 profile_version: 0.3.0
+domain: drug
+workflow: mapping
 description: >
   Step 1 on the MPRINT dictionary. Coding keeps every exact code; linking
   follows each code into RxNorm at ingredient level; resolution accepts a term
@@ -10,7 +13,7 @@ description: >
 # says which classes sit at which level and what a coarser target loses.
 target:
   spec: rxnorm
-  granularity: ingredient
+  level: ingredient
   # Non-US brands and products live in RxNorm Extension; they count when every
   # ingredient they reach is an RxNorm ingredient.
   source_terminologies: [RxNorm Extension]
@@ -19,43 +22,82 @@ task:
   operation: drug_normalization
   mapping_intent: ingredient_level_analysis
 
-input:
-  optional_context: [route, drug_role, indication, dose, formulation]
-  mapping_key_context: [route, dose, unit, formulation]
+context:
+  fields:
+    - name: route
+      kind: attribute
+      use: [key, resolve, check]
+    - name: drug_role
+      kind: context
+      use: []
+    - name: indication
+      kind: context
+      use: []
+    - name: dose
+      kind: attribute
+      use: [key, resolve, check]
+    - name: unit
+      kind: attribute
+      use: [key]
+    - name: formulation
+      kind: attribute
+      use: [key, resolve, check]
 
 knowledge:
-  primary_resources: [RxNorm]
-  secondary_resources:
-    [RxNorm Extension, UNII, MeSH, NCIt, SNOMED, ATC, UMLS, DrugBank, Drugs@FDA, OrangeBook,
-     EMAArticle57]
+  resources:
+    - RxNorm
+    - RxNorm Extension
+    - UNII
+    - MeSH
+    - NCIt
+    - SNOMED
+    - ATC
+    - UMLS
+    - DrugBank
+    - Drugs@FDA
+    - OrangeBook
+    - EMAArticle57
   allowed_relationships:
-    [has_ingredient, has_precise_ingredient, has_tradename, has_dose_form, consists_of]
+    - has_ingredient
+    - has_precise_ingredient
+    - has_tradename
+    - has_dose_form
+    - consists_of
 
-validation:
-  rules:
-    - drug_semantics
+tiers:
+  - name: step1
+    # 1a. Exact matching across every dictionary.
+    match:
+      - op: exact
+        options:
+          vocabularies:
+            - RxNorm
+            - RxNorm Extension
+            - UNII
+            - MeSH
+            - NCIt
+            - SNOMED
+            - ATC
+            - UMLS
+            - DrugBank
+            - Drugs@FDA
+            - OrangeBook
+            - EMAArticle57
+    # Linking: group codes that are the same entity, and follow them into RxNorm.
+    link:
+      op: standard
+      options:
+        concordance: true
+        # Only two different RxNorm-family codes in one group make the target
+        # ambiguous; a SNOMED substance and its product, or several FDA
+        # listings of one brand, are recorded together.
+        conflict_vocabularies: [RxNorm, RxNorm Extension]
+    # 1b. Resolution: MPRINT's rule.
+    resolve:
+      op: concordant
+      options:
+        authority_sources: [RxNorm, RxNorm Extension]
+        minimum_mention_length: 5
 
-workflow:
-  tiers:
-    - name: step1
-      # 1a. Coding: every exact code, in every vocabulary.
-      coding:
-        - op: exact
-          options:
-            vocabularies:
-              [RxNorm, RxNorm Extension, UNII, MeSH, NCIt, SNOMED, ATC, UMLS, DrugBank,
-               Drugs@FDA, OrangeBook, EMAArticle57]
-      # Linking: group codes that are the same entity, and follow them into RxNorm.
-      linking:
-        op: concordance
-        options:
-          # Only two different RxNorm-family codes in one group make the target
-          # ambiguous; a SNOMED substance and its product, or several FDA
-          # listings of one brand, are recorded together.
-          conflict_vocabularies: [RxNorm, RxNorm Extension]
-      # 1b. Resolution: MPRINT's rule.
-      resolution:
-        op: concordant
-        options:
-          authority_sources: [RxNorm, RxNorm Extension]
-          minimum_mention_length: 5
+checks:
+  - drug.semantics

@@ -43,12 +43,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -78,55 +79,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "selected 1001 (ExampleAlpha) from IN 1001",
         "record_id": "synthetic-row-1",
+        "refinement": null,
         "relationship_to_source": "EXACT",
         "routing_features": {
           "channel_agreement": 1,
@@ -155,8 +169,8 @@
           "exact terminology or official synonym match on an active concept"
         ],
         "routing_status": "AUTO_ACCEPT",
-        "sau_id": "SAU-9D0A44CB2906CEAF73FE92FAE602C266",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-F7F09A089A3F962DE80E960E0526ACB3",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -182,7 +196,7 @@
         "unsupported_inferences": [],
         "validation": {
           "findings": [],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID"
         }
       },
@@ -206,6 +220,7 @@
             "retrieval_evidence": [
               {
                 "channel": "normalized_lookup",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampleAlpha",
                 "rank": 1,
@@ -280,8 +295,36 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [
+            {
+              "assertion_sources": [],
+              "kind": "EQUIVALENCE",
+              "predicates": [],
+              "source": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              }
+            }
+          ],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -296,11 +339,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-9D0A44CB2906CEAF73FE92FAE602C266",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-F7F09A089A3F962DE80E960E0526ACB3",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-F1CDE1DDA8F49472CA34A817C60D67ED",
+      "mapping_key": "MAP-A47DCBF127C85D22BA6C7A6BEFFE80F5",
       "proposal": {
         "analysis_level_concept": {
           "concept_class": "IN",
@@ -324,10 +367,11 @@
           "route": "oral"
         },
         "rationale": "selected 1001 (ExampleAlpha) from IN 1001",
+        "refinement": null,
         "relationship_to_source": "EXACT",
         "requested_human_review": false,
-        "sau_id": "SAU-9D0A44CB2906CEAF73FE92FAE602C266",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-F7F09A089A3F962DE80E960E0526ACB3",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -399,12 +443,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-F1CDE1DDA8F49472CA34A817C60D67ED",
+        "mapping_key": "MAP-A47DCBF127C85D22BA6C7A6BEFFE80F5",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "examplealpha",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -418,15 +465,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -444,8 +492,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-9D0A44CB2906CEAF73FE92FAE602C266",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-F7F09A089A3F962DE80E960E0526ACB3",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -468,10 +516,10 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID"
       }
     },
@@ -494,7 +542,7 @@
       }
     ],
     "row_number": 1,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleAlpha",
     "status": "success"
   },
@@ -549,12 +597,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -584,55 +633,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "selected 1001 (ExampleAlpha) from SBD 2001",
         "record_id": "synthetic-row-2",
+        "refinement": null,
         "relationship_to_source": "TARGET_BROADER_THAN_SOURCE",
         "routing_features": {
           "channel_agreement": 1,
@@ -661,8 +723,8 @@
           "exact terminology or official synonym match on an active concept"
         ],
         "routing_status": "AUTO_ACCEPT",
-        "sau_id": "SAU-E3E2146A2062531F59BAEB93CBF5F62D",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-DB6864D14B8679277D2A7FCEC57D5ADC",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -722,7 +784,7 @@
               "severity": "info"
             }
           ],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID_WITH_SEMANTIC_LOSS"
         }
       },
@@ -747,9 +809,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "IN"
-                },
+                "extensions": {},
+                "object_class": "IN",
                 "object_id": "1001",
                 "object_label": "ExampleAlpha",
                 "object_vocabulary": null,
@@ -764,9 +825,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "PIN"
-                },
+                "extensions": {},
+                "object_class": "PIN",
                 "object_id": "1101",
                 "object_label": "ExampleAlpha sodium",
                 "object_vocabulary": null,
@@ -781,9 +841,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "BN"
-                },
+                "extensions": {},
+                "object_class": "BN",
                 "object_id": "3001",
                 "object_label": "ExampleBrand",
                 "object_vocabulary": null,
@@ -798,9 +857,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "DF"
-                },
+                "extensions": {},
+                "object_class": "DF",
                 "object_id": "4001",
                 "object_label": "Oral Tablet",
                 "object_vocabulary": null,
@@ -815,9 +873,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "SCDC"
-                },
+                "extensions": {},
+                "object_class": "SCDC",
                 "object_id": "5001",
                 "object_label": "ExampleAlpha sodium 10 MG",
                 "object_vocabulary": null,
@@ -832,9 +889,8 @@
                 "confidence": null,
                 "direct": true,
                 "evidence_type": "rxnav_rela_assertion",
-                "extensions": {
-                  "target_tty": "IN"
-                },
+                "extensions": {},
+                "object_class": "IN",
                 "object_id": "1001",
                 "object_label": "ExampleAlpha",
                 "object_vocabulary": null,
@@ -849,6 +905,7 @@
             "retrieval_evidence": [
               {
                 "channel": "normalized_lookup",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampleAlpha sodium 10 MG Oral Tablet [ExampleBrand]",
                 "rank": 1,
@@ -923,16 +980,44 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [
+            {
+              "assertion_sources": [],
+              "kind": "PROJECTION",
+              "predicates": [
+                "has_ingredient"
+              ],
+              "source": {
+                "concept_code": "2001",
+                "label": "ExampleAlpha sodium 10 MG Oral Tablet [ExampleBrand]",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "2001",
+                "label": "ExampleAlpha sodium 10 MG Oral Tablet [ExampleBrand]",
+                "vocabulary": "RxNorm"
+              }
+            }
+          ],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [
           {
             "authority": "official_coding_relationship",
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "IN"
-            },
+            "extensions": {},
+            "object_class": "IN",
             "object_id": "1001",
             "object_label": "ExampleAlpha",
             "object_vocabulary": null,
@@ -947,9 +1032,8 @@
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "PIN"
-            },
+            "extensions": {},
+            "object_class": "PIN",
             "object_id": "1101",
             "object_label": "ExampleAlpha sodium",
             "object_vocabulary": null,
@@ -964,9 +1048,8 @@
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "BN"
-            },
+            "extensions": {},
+            "object_class": "BN",
             "object_id": "3001",
             "object_label": "ExampleBrand",
             "object_vocabulary": null,
@@ -981,9 +1064,8 @@
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "DF"
-            },
+            "extensions": {},
+            "object_class": "DF",
             "object_id": "4001",
             "object_label": "Oral Tablet",
             "object_vocabulary": null,
@@ -998,9 +1080,8 @@
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "SCDC"
-            },
+            "extensions": {},
+            "object_class": "SCDC",
             "object_id": "5001",
             "object_label": "ExampleAlpha sodium 10 MG",
             "object_vocabulary": null,
@@ -1015,9 +1096,8 @@
             "confidence": null,
             "direct": true,
             "evidence_type": "rxnav_rela_assertion",
-            "extensions": {
-              "target_tty": "IN"
-            },
+            "extensions": {},
+            "object_class": "IN",
             "object_id": "1001",
             "object_label": "ExampleAlpha",
             "object_vocabulary": null,
@@ -1028,6 +1108,7 @@
             "subject_label": "ExampleAlpha sodium 10 MG Oral Tablet [ExampleBrand]"
           }
         ],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -1042,11 +1123,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-E3E2146A2062531F59BAEB93CBF5F62D",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-DB6864D14B8679277D2A7FCEC57D5ADC",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-9A66E7E6DE2384758E432F0F30FAEE27",
+      "mapping_key": "MAP-593B35BF2F09436994CE7C8DDB011D47",
       "proposal": {
         "analysis_level_concept": {
           "concept_class": "IN",
@@ -1077,10 +1158,11 @@
           "route": "oral"
         },
         "rationale": "selected 1001 (ExampleAlpha) from SBD 2001",
+        "refinement": null,
         "relationship_to_source": "TARGET_BROADER_THAN_SOURCE",
         "requested_human_review": false,
-        "sau_id": "SAU-E3E2146A2062531F59BAEB93CBF5F62D",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-DB6864D14B8679277D2A7FCEC57D5ADC",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -1178,12 +1260,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-9A66E7E6DE2384758E432F0F30FAEE27",
+        "mapping_key": "MAP-593B35BF2F09436994CE7C8DDB011D47",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "examplealpha sodium 10 mg oral tablet [examplebrand]",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -1197,15 +1282,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -1223,8 +1309,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-E3E2146A2062531F59BAEB93CBF5F62D",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-DB6864D14B8679277D2A7FCEC57D5ADC",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -1247,7 +1333,7 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [
           {
@@ -1258,7 +1344,7 @@
             "severity": "info"
           }
         ],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID_WITH_SEMANTIC_LOSS"
       }
     },
@@ -1281,7 +1367,7 @@
       }
     ],
     "row_number": 2,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleAlpha sodium 10 MG Oral Tablet [ExampleBrand]",
     "status": "success"
   },
@@ -1324,12 +1410,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -1359,55 +1446,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "2002 resolves to 2 ingredients: ExampleBeta (1002), ExampleAlpha (1001)",
         "record_id": "synthetic-row-3",
+        "refinement": null,
         "relationship_to_source": "MULTIPLE_COMPONENTS_REQUIRED",
         "routing_features": {
           "channel_agreement": 1,
@@ -1436,8 +1536,8 @@
           "exact terminology or official synonym match on an active concept"
         ],
         "routing_status": "AUTO_ACCEPT",
-        "sau_id": "SAU-F53C983DFCDA561DE484F19E3FAB03B4",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-7B05C51D8B1F63262E3AD2B50FCDD56B",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -1498,7 +1598,7 @@
               "severity": "info"
             }
           ],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID_WITH_SEMANTIC_LOSS"
         }
       },
@@ -1523,9 +1623,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "IN"
-                },
+                "extensions": {},
+                "object_class": "IN",
                 "object_id": "1002",
                 "object_label": "ExampleBeta",
                 "object_vocabulary": null,
@@ -1540,9 +1639,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "IN"
-                },
+                "extensions": {},
+                "object_class": "IN",
                 "object_id": "1001",
                 "object_label": "ExampleAlpha",
                 "object_vocabulary": null,
@@ -1557,6 +1655,7 @@
             "retrieval_evidence": [
               {
                 "channel": "normalized_lookup",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampleAlpha / ExampleBeta",
                 "rank": 1,
@@ -1631,16 +1730,66 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [
+            {
+              "assertion_sources": [],
+              "kind": "PROJECTION",
+              "predicates": [
+                "has_ingredient"
+              ],
+              "source": {
+                "concept_code": "2002",
+                "label": "ExampleAlpha / ExampleBeta",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "1002",
+                "label": "ExampleBeta",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "2002",
+                "label": "ExampleAlpha / ExampleBeta",
+                "vocabulary": "RxNorm"
+              }
+            },
+            {
+              "assertion_sources": [],
+              "kind": "PROJECTION",
+              "predicates": [
+                "has_ingredient"
+              ],
+              "source": {
+                "concept_code": "2002",
+                "label": "ExampleAlpha / ExampleBeta",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "2002",
+                "label": "ExampleAlpha / ExampleBeta",
+                "vocabulary": "RxNorm"
+              }
+            }
+          ],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [
           {
             "authority": "official_coding_relationship",
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "IN"
-            },
+            "extensions": {},
+            "object_class": "IN",
             "object_id": "1002",
             "object_label": "ExampleBeta",
             "object_vocabulary": null,
@@ -1655,9 +1804,8 @@
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "IN"
-            },
+            "extensions": {},
+            "object_class": "IN",
             "object_id": "1001",
             "object_label": "ExampleAlpha",
             "object_vocabulary": null,
@@ -1668,6 +1816,7 @@
             "subject_label": "ExampleAlpha / ExampleBeta"
           }
         ],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -1682,11 +1831,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-F53C983DFCDA561DE484F19E3FAB03B4",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-7B05C51D8B1F63262E3AD2B50FCDD56B",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-40A97825C05B8416EEED93EBCB40F460",
+      "mapping_key": "MAP-CF08BE99C156F3B7407E0F6F10CB6582",
       "proposal": {
         "analysis_level_concept": null,
         "decision": "MULTI_CONCEPT_MAPPED",
@@ -1705,10 +1854,11 @@
           "route": "oral"
         },
         "rationale": "2002 resolves to 2 ingredients: ExampleBeta (1002), ExampleAlpha (1001)",
+        "refinement": null,
         "relationship_to_source": "MULTIPLE_COMPONENTS_REQUIRED",
         "requested_human_review": false,
-        "sau_id": "SAU-F53C983DFCDA561DE484F19E3FAB03B4",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-7B05C51D8B1F63262E3AD2B50FCDD56B",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -1800,12 +1950,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-40A97825C05B8416EEED93EBCB40F460",
+        "mapping_key": "MAP-CF08BE99C156F3B7407E0F6F10CB6582",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "examplealpha / examplebeta",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -1819,15 +1972,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -1845,8 +1999,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-F53C983DFCDA561DE484F19E3FAB03B4",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-7B05C51D8B1F63262E3AD2B50FCDD56B",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -1869,7 +2023,7 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [
           {
@@ -1887,7 +2041,7 @@
             "severity": "info"
           }
         ],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID_WITH_SEMANTIC_LOSS"
       }
     },
@@ -1910,7 +2064,7 @@
       }
     ],
     "row_number": 3,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleAlpha / ExampleBeta",
     "status": "success"
   },
@@ -1960,12 +2114,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -1995,55 +2150,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "selected 1001 (ExampleAlpha) from PIN 1101",
         "record_id": "synthetic-row-4",
+        "refinement": null,
         "relationship_to_source": "TARGET_BROADER_THAN_SOURCE",
         "routing_features": {
           "channel_agreement": 1,
@@ -2072,8 +2240,8 @@
           "exact terminology or official synonym match on an active concept"
         ],
         "routing_status": "AUTO_ACCEPT",
-        "sau_id": "SAU-C0A49206B0E6C35D9861952CBF5E6FA1",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-5264AD5A1AE3F4D1E73CE61913F19EB8",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -2118,7 +2286,7 @@
               "severity": "info"
             }
           ],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID_WITH_SEMANTIC_LOSS"
         }
       },
@@ -2143,9 +2311,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "IN"
-                },
+                "extensions": {},
+                "object_class": "IN",
                 "object_id": "1001",
                 "object_label": "ExampleAlpha",
                 "object_vocabulary": null,
@@ -2160,6 +2327,7 @@
             "retrieval_evidence": [
               {
                 "channel": "normalized_lookup",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampleAlpha sodium",
                 "rank": 1,
@@ -2234,16 +2402,44 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [
+            {
+              "assertion_sources": [],
+              "kind": "PROJECTION",
+              "predicates": [
+                "has_ingredient"
+              ],
+              "source": {
+                "concept_code": "1101",
+                "label": "ExampleAlpha sodium",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "1101",
+                "label": "ExampleAlpha sodium",
+                "vocabulary": "RxNorm"
+              }
+            }
+          ],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [
           {
             "authority": "official_coding_relationship",
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "IN"
-            },
+            "extensions": {},
+            "object_class": "IN",
             "object_id": "1001",
             "object_label": "ExampleAlpha",
             "object_vocabulary": null,
@@ -2254,6 +2450,7 @@
             "subject_label": "ExampleAlpha sodium"
           }
         ],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -2268,11 +2465,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-C0A49206B0E6C35D9861952CBF5E6FA1",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-5264AD5A1AE3F4D1E73CE61913F19EB8",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-99133BCB0C1682646FEB1BBF0BC62F75",
+      "mapping_key": "MAP-8A64DEF77B120CA0268C426617DEC10F",
       "proposal": {
         "analysis_level_concept": {
           "concept_class": "IN",
@@ -2298,10 +2495,11 @@
           "route": "oral"
         },
         "rationale": "selected 1001 (ExampleAlpha) from PIN 1101",
+        "refinement": null,
         "relationship_to_source": "TARGET_BROADER_THAN_SOURCE",
         "requested_human_review": false,
-        "sau_id": "SAU-C0A49206B0E6C35D9861952CBF5E6FA1",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-5264AD5A1AE3F4D1E73CE61913F19EB8",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -2384,12 +2582,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-99133BCB0C1682646FEB1BBF0BC62F75",
+        "mapping_key": "MAP-8A64DEF77B120CA0268C426617DEC10F",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "examplealpha sodium",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -2403,15 +2604,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -2429,8 +2631,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-C0A49206B0E6C35D9861952CBF5E6FA1",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-5264AD5A1AE3F4D1E73CE61913F19EB8",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -2453,7 +2655,7 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [
           {
@@ -2464,7 +2666,7 @@
             "severity": "info"
           }
         ],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID_WITH_SEMANTIC_LOSS"
       }
     },
@@ -2487,7 +2689,7 @@
       }
     ],
     "row_number": 4,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleAlpha sodium",
     "status": "success"
   },
@@ -2522,12 +2724,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -2557,55 +2760,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "no RxNorm candidate was retrieved for 'UNMAPPABLE EXAMPLE' on any enabled channel",
         "record_id": "synthetic-row-5",
+        "refinement": null,
         "relationship_to_source": "UNSUPPORTED_MAPPING",
         "routing_features": {
           "channel_agreement": 0,
@@ -2634,8 +2850,8 @@
           "no candidate concept was retrieved on any channel: no RxNorm candidate was retrieved for 'UNMAPPABLE EXAMPLE' on any enabled channel"
         ],
         "routing_status": "ABSTAIN",
-        "sau_id": "SAU-5C9A3C052C57968C456D3A8633FB0CC0",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-59D73D27B3EDC17E4E9CA6654EFDBCD7",
+        "schema_version": "0.4.0",
         "selected_concepts": [],
         "semantic_loss": [],
         "source_level_concept": null,
@@ -2643,7 +2859,7 @@
         "unsupported_inferences": [],
         "validation": {
           "findings": [],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID"
         }
       },
@@ -2706,8 +2922,15 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -2722,11 +2945,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-5C9A3C052C57968C456D3A8633FB0CC0",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-59D73D27B3EDC17E4E9CA6654EFDBCD7",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-E85E3DB52FCFB78216A79AA768E99A47",
+      "mapping_key": "MAP-DA382C6243671D7B9B0E9477C5DDD87A",
       "proposal": {
         "analysis_level_concept": null,
         "decision": "NO_VALID_MAPPING",
@@ -2737,10 +2960,11 @@
           "route": "oral"
         },
         "rationale": "no RxNorm candidate was retrieved for 'UNMAPPABLE EXAMPLE' on any enabled channel",
+        "refinement": null,
         "relationship_to_source": "UNSUPPORTED_MAPPING",
         "requested_human_review": false,
-        "sau_id": "SAU-5C9A3C052C57968C456D3A8633FB0CC0",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-59D73D27B3EDC17E4E9CA6654EFDBCD7",
+        "schema_version": "0.4.0",
         "selected_concepts": [],
         "semantic_loss": [],
         "source_level_concept": null,
@@ -2794,12 +3018,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-E85E3DB52FCFB78216A79AA768E99A47",
+        "mapping_key": "MAP-DA382C6243671D7B9B0E9477C5DDD87A",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "unmappable example",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -2813,15 +3040,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -2839,8 +3067,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-5C9A3C052C57968C456D3A8633FB0CC0",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-59D73D27B3EDC17E4E9CA6654EFDBCD7",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -2863,10 +3091,10 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID"
       }
     },
@@ -2889,7 +3117,7 @@
       }
     ],
     "row_number": 5,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "UNMAPPABLE EXAMPLE",
     "status": "success"
   },
@@ -2924,12 +3152,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -2959,55 +3188,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "best candidate 8001 ('Unrelated') has lexical similarity 0.00 to 'ZZZQQQ 999', below the rejection floor 0.30, and no exact or spelling-corrected match corroborates it",
         "record_id": "synthetic-row-6",
+        "refinement": null,
         "relationship_to_source": "UNSUPPORTED_MAPPING",
         "routing_features": {
           "channel_agreement": 0,
@@ -3036,8 +3278,8 @@
           "retrieved candidates were considered but none was accepted: best candidate 8001 ('Unrelated') has lexical similarity 0.00 to 'ZZZQQQ 999', below the rejection floor 0.30, and no exact or spelling-corrected match corroborates it"
         ],
         "routing_status": "ABSTAIN",
-        "sau_id": "SAU-A48B624DE920FA99B3E9AE222F681B39",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-D4A7A7055FB1C51E79AFDD8602F3328E",
+        "schema_version": "0.4.0",
         "selected_concepts": [],
         "semantic_loss": [],
         "source_level_concept": null,
@@ -3045,7 +3287,7 @@
         "unsupported_inferences": [],
         "validation": {
           "findings": [],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID"
         }
       },
@@ -3069,6 +3311,7 @@
             "retrieval_evidence": [
               {
                 "channel": "terminology_approximate_current",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ZZZQQQ 999",
                 "rank": 1,
@@ -3143,8 +3386,36 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [
+            {
+              "assertion_sources": [],
+              "kind": "EQUIVALENCE",
+              "predicates": [],
+              "source": {
+                "concept_code": "8001",
+                "label": "Unrelated",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "8001",
+                "label": "Unrelated",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "8001",
+                "label": "Unrelated",
+                "vocabulary": "RxNorm"
+              }
+            }
+          ],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -3159,11 +3430,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-A48B624DE920FA99B3E9AE222F681B39",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-D4A7A7055FB1C51E79AFDD8602F3328E",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-074EFADE3E2C69F9F6C1F9CCD7CD84D9",
+      "mapping_key": "MAP-21EF9ECD797A3E161471539967975304",
       "proposal": {
         "analysis_level_concept": null,
         "decision": "NO_VALID_MAPPING",
@@ -3174,10 +3445,11 @@
           "route": "oral"
         },
         "rationale": "best candidate 8001 ('Unrelated') has lexical similarity 0.00 to 'ZZZQQQ 999', below the rejection floor 0.30, and no exact or spelling-corrected match corroborates it",
+        "refinement": null,
         "relationship_to_source": "UNSUPPORTED_MAPPING",
         "requested_human_review": false,
-        "sau_id": "SAU-A48B624DE920FA99B3E9AE222F681B39",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-D4A7A7055FB1C51E79AFDD8602F3328E",
+        "schema_version": "0.4.0",
         "selected_concepts": [],
         "semantic_loss": [],
         "source_level_concept": null,
@@ -3231,12 +3503,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-074EFADE3E2C69F9F6C1F9CCD7CD84D9",
+        "mapping_key": "MAP-21EF9ECD797A3E161471539967975304",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "zzzqqq 999",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -3250,15 +3525,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -3276,8 +3552,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-A48B624DE920FA99B3E9AE222F681B39",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-D4A7A7055FB1C51E79AFDD8602F3328E",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -3300,10 +3576,10 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID"
       }
     },
@@ -3326,7 +3602,7 @@
       }
     ],
     "row_number": 6,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ZZZQQQ 999",
     "status": "success"
   },
@@ -3361,12 +3637,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -3396,55 +3673,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "deterministic result requires relationship RELATED_NOT_EQUIVALENT, which profile faers_drug_normalization does not permit",
         "record_id": "synthetic-row-7",
+        "refinement": null,
         "relationship_to_source": "UNSUPPORTED_MAPPING",
         "routing_features": {
           "channel_agreement": 0,
@@ -3474,8 +3764,8 @@
           "the adjudicator requested review"
         ],
         "routing_status": "HUMAN_REVIEW",
-        "sau_id": "SAU-E719F227CE8FA8D3B436706AE7FE43AC",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-92C52FCD973BE3E78978C0C836F9DF8E",
+        "schema_version": "0.4.0",
         "selected_concepts": [],
         "semantic_loss": [],
         "source_level_concept": null,
@@ -3483,7 +3773,7 @@
         "unsupported_inferences": [],
         "validation": {
           "findings": [],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "HUMAN_REVIEW_REQUIRED"
         }
       },
@@ -3507,6 +3797,7 @@
             "retrieval_evidence": [
               {
                 "channel": "terminology_approximate_historical",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampleRetired",
                 "rank": 1,
@@ -3581,8 +3872,15 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -3597,11 +3895,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-E719F227CE8FA8D3B436706AE7FE43AC",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-92C52FCD973BE3E78978C0C836F9DF8E",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-7EE3FA7BCEEB7CAE36C22C9878E3CE7F",
+      "mapping_key": "MAP-55635FDC49069400AF5747913A907341",
       "proposal": {
         "analysis_level_concept": null,
         "decision": "ABSTAINED",
@@ -3612,10 +3910,11 @@
           "route": "oral"
         },
         "rationale": "deterministic result requires relationship RELATED_NOT_EQUIVALENT, which profile faers_drug_normalization does not permit",
+        "refinement": null,
         "relationship_to_source": "UNSUPPORTED_MAPPING",
         "requested_human_review": true,
-        "sau_id": "SAU-E719F227CE8FA8D3B436706AE7FE43AC",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-92C52FCD973BE3E78978C0C836F9DF8E",
+        "schema_version": "0.4.0",
         "selected_concepts": [],
         "semantic_loss": [],
         "source_level_concept": null,
@@ -3669,12 +3968,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-7EE3FA7BCEEB7CAE36C22C9878E3CE7F",
+        "mapping_key": "MAP-55635FDC49069400AF5747913A907341",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "exampleretired",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -3688,15 +3990,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -3714,8 +4017,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-E719F227CE8FA8D3B436706AE7FE43AC",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-92C52FCD973BE3E78978C0C836F9DF8E",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -3738,10 +4041,10 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "HUMAN_REVIEW_REQUIRED"
       }
     },
@@ -3764,7 +4067,7 @@
       }
     ],
     "row_number": 7,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleRetired",
     "status": "success"
   },
@@ -3816,12 +4119,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -3851,55 +4155,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "selected 1001 (ExampleAlpha) from BN 3002",
         "record_id": "synthetic-row-8",
+        "refinement": null,
         "relationship_to_source": "TARGET_BROADER_THAN_SOURCE",
         "routing_features": {
           "channel_agreement": 1,
@@ -3928,8 +4245,8 @@
           "the source names a product with more than one reachable precise ingredient; the salt form is unresolved"
         ],
         "routing_status": "HUMAN_REVIEW",
-        "sau_id": "SAU-3C8637776E8A3FEA867029C839ED8B77",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-B60EA528DF297DEBD455CB7698A768E7",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -3979,7 +4296,7 @@
               "severity": "info"
             }
           ],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID_WITH_SEMANTIC_LOSS"
         }
       },
@@ -4004,9 +4321,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "IN"
-                },
+                "extensions": {},
+                "object_class": "IN",
                 "object_id": "1001",
                 "object_label": "ExampleAlpha",
                 "object_vocabulary": null,
@@ -4021,9 +4337,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "PIN"
-                },
+                "extensions": {},
+                "object_class": "PIN",
                 "object_id": "1101",
                 "object_label": "ExampleAlpha sodium",
                 "object_vocabulary": null,
@@ -4038,9 +4353,8 @@
                 "confidence": null,
                 "direct": false,
                 "evidence_type": "rxnav_tty_traversal",
-                "extensions": {
-                  "target_tty": "PIN"
-                },
+                "extensions": {},
+                "object_class": "PIN",
                 "object_id": "1102",
                 "object_label": "ExampleAlpha hydrochloride",
                 "object_vocabulary": null,
@@ -4055,6 +4369,7 @@
             "retrieval_evidence": [
               {
                 "channel": "normalized_lookup",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampleAmbiguous",
                 "rank": 1,
@@ -4129,16 +4444,44 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [
+            {
+              "assertion_sources": [],
+              "kind": "PROJECTION",
+              "predicates": [
+                "has_ingredient"
+              ],
+              "source": {
+                "concept_code": "3002",
+                "label": "ExampleAmbiguous",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "3002",
+                "label": "ExampleAmbiguous",
+                "vocabulary": "RxNorm"
+              }
+            }
+          ],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [
           {
             "authority": "official_coding_relationship",
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "IN"
-            },
+            "extensions": {},
+            "object_class": "IN",
             "object_id": "1001",
             "object_label": "ExampleAlpha",
             "object_vocabulary": null,
@@ -4153,9 +4496,8 @@
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "PIN"
-            },
+            "extensions": {},
+            "object_class": "PIN",
             "object_id": "1101",
             "object_label": "ExampleAlpha sodium",
             "object_vocabulary": null,
@@ -4170,9 +4512,8 @@
             "confidence": null,
             "direct": false,
             "evidence_type": "rxnav_tty_traversal",
-            "extensions": {
-              "target_tty": "PIN"
-            },
+            "extensions": {},
+            "object_class": "PIN",
             "object_id": "1102",
             "object_label": "ExampleAlpha hydrochloride",
             "object_vocabulary": null,
@@ -4183,6 +4524,7 @@
             "subject_label": "ExampleAmbiguous"
           }
         ],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -4197,11 +4539,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-3C8637776E8A3FEA867029C839ED8B77",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-B60EA528DF297DEBD455CB7698A768E7",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-A81F626E1576D8BF1F9319C724205444",
+      "mapping_key": "MAP-B5D1B0730D82877AD8E16293E4832F62",
       "proposal": {
         "analysis_level_concept": {
           "concept_class": "IN",
@@ -4229,10 +4571,11 @@
           "route": "oral"
         },
         "rationale": "selected 1001 (ExampleAlpha) from BN 3002",
+        "refinement": null,
         "relationship_to_source": "TARGET_BROADER_THAN_SOURCE",
         "requested_human_review": false,
-        "sau_id": "SAU-3C8637776E8A3FEA867029C839ED8B77",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-B60EA528DF297DEBD455CB7698A768E7",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -4320,12 +4663,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-A81F626E1576D8BF1F9319C724205444",
+        "mapping_key": "MAP-B5D1B0730D82877AD8E16293E4832F62",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "exampleambiguous",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -4339,15 +4685,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -4365,8 +4712,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-3C8637776E8A3FEA867029C839ED8B77",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-B60EA528DF297DEBD455CB7698A768E7",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -4389,7 +4736,7 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [
           {
@@ -4400,7 +4747,7 @@
             "severity": "info"
           }
         ],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID_WITH_SEMANTIC_LOSS"
       }
     },
@@ -4423,7 +4770,7 @@
       }
     ],
     "row_number": 8,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleAmbiguous",
     "status": "success"
   },
@@ -4458,12 +4805,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -4493,55 +4841,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "deterministic result requires relationship RELATED_NOT_EQUIVALENT, which profile faers_drug_normalization does not permit",
         "record_id": "synthetic-row-9",
+        "refinement": null,
         "relationship_to_source": "UNSUPPORTED_MAPPING",
         "routing_features": {
           "channel_agreement": 0,
@@ -4571,8 +4932,8 @@
           "the adjudicator requested review"
         ],
         "routing_status": "HUMAN_REVIEW",
-        "sau_id": "SAU-998302A15C69358E706F0C2B5E9A4352",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-02B1CCFD4554BC377E9393D67811E257",
+        "schema_version": "0.4.0",
         "selected_concepts": [],
         "semantic_loss": [],
         "source_level_concept": null,
@@ -4580,7 +4941,7 @@
         "unsupported_inferences": [],
         "validation": {
           "findings": [],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "HUMAN_REVIEW_REQUIRED"
         }
       },
@@ -4604,6 +4965,7 @@
             "retrieval_evidence": [
               {
                 "channel": "normalized_lookup",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampleUnsupported 10 MG Oral Tablet",
                 "rank": 1,
@@ -4678,8 +5040,15 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -4694,11 +5063,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-998302A15C69358E706F0C2B5E9A4352",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-02B1CCFD4554BC377E9393D67811E257",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-DCFF7E61F936D6AFCC1C61E310A38009",
+      "mapping_key": "MAP-A3742B3D23C8CFBC0EAF105A18DBE3D8",
       "proposal": {
         "analysis_level_concept": null,
         "decision": "ABSTAINED",
@@ -4709,10 +5078,11 @@
           "route": "oral"
         },
         "rationale": "deterministic result requires relationship RELATED_NOT_EQUIVALENT, which profile faers_drug_normalization does not permit",
+        "refinement": null,
         "relationship_to_source": "UNSUPPORTED_MAPPING",
         "requested_human_review": true,
-        "sau_id": "SAU-998302A15C69358E706F0C2B5E9A4352",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-02B1CCFD4554BC377E9393D67811E257",
+        "schema_version": "0.4.0",
         "selected_concepts": [],
         "semantic_loss": [],
         "source_level_concept": null,
@@ -4766,12 +5136,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-DCFF7E61F936D6AFCC1C61E310A38009",
+        "mapping_key": "MAP-A3742B3D23C8CFBC0EAF105A18DBE3D8",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "exampleunsupported 10 mg oral tablet",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -4785,15 +5158,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -4811,8 +5185,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-998302A15C69358E706F0C2B5E9A4352",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-02B1CCFD4554BC377E9393D67811E257",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -4835,10 +5209,10 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "HUMAN_REVIEW_REQUIRED"
       }
     },
@@ -4861,7 +5235,7 @@
       }
     ],
     "row_number": 9,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleUnsupported 10 MG Oral Tablet",
     "status": "success"
   },
@@ -4886,7 +5260,7 @@
       }
     ],
     "row_number": 10,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "  ",
     "status": "skipped"
   },
@@ -4934,12 +5308,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -4969,55 +5344,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "selected 1001 (ExampleAlpha) from IN 1001",
         "record_id": "synthetic-row-11",
+        "refinement": null,
         "relationship_to_source": "EXACT",
         "routing_features": {
           "channel_agreement": 1,
@@ -5046,8 +5434,8 @@
           "exact terminology or official synonym match on an active concept"
         ],
         "routing_status": "AUTO_ACCEPT",
-        "sau_id": "SAU-D0B2F3F3BE1C7B15C761E75F4133722C",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-3F177338C15A56F0269F0BFC976131A6",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -5073,7 +5461,7 @@
         "unsupported_inferences": [],
         "validation": {
           "findings": [],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID"
         }
       },
@@ -5097,6 +5485,7 @@
             "retrieval_evidence": [
               {
                 "channel": "normalized_lookup",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampleAlpha",
                 "rank": 1,
@@ -5171,8 +5560,36 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [
+            {
+              "assertion_sources": [],
+              "kind": "EQUIVALENCE",
+              "predicates": [],
+              "source": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              }
+            }
+          ],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -5187,11 +5604,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-D0B2F3F3BE1C7B15C761E75F4133722C",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-3F177338C15A56F0269F0BFC976131A6",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-F1CDE1DDA8F49472CA34A817C60D67ED",
+      "mapping_key": "MAP-A47DCBF127C85D22BA6C7A6BEFFE80F5",
       "proposal": {
         "analysis_level_concept": {
           "concept_class": "IN",
@@ -5215,10 +5632,11 @@
           "route": "oral"
         },
         "rationale": "selected 1001 (ExampleAlpha) from IN 1001",
+        "refinement": null,
         "relationship_to_source": "EXACT",
         "requested_human_review": false,
-        "sau_id": "SAU-D0B2F3F3BE1C7B15C761E75F4133722C",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-3F177338C15A56F0269F0BFC976131A6",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -5290,12 +5708,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-F1CDE1DDA8F49472CA34A817C60D67ED",
+        "mapping_key": "MAP-A47DCBF127C85D22BA6C7A6BEFFE80F5",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "examplealpha",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -5309,15 +5730,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -5335,8 +5757,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-D0B2F3F3BE1C7B15C761E75F4133722C",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-3F177338C15A56F0269F0BFC976131A6",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -5359,10 +5781,10 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID"
       }
     },
@@ -5385,7 +5807,7 @@
       }
     ],
     "row_number": 11,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleAlpha",
     "status": "success"
   },
@@ -5433,12 +5855,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -5468,55 +5891,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "selected 1001 (ExampleAlpha) from IN 1001",
         "record_id": "synthetic-row-12",
+        "refinement": null,
         "relationship_to_source": "EXACT",
         "routing_features": {
           "channel_agreement": 1,
@@ -5545,8 +5981,8 @@
           "exact terminology or official synonym match on an active concept"
         ],
         "routing_status": "AUTO_ACCEPT",
-        "sau_id": "SAU-A4B62FB1C34B8620E7EBB85A6435889B",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-E7C92D8920B407181036E4E151E968EB",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -5572,7 +6008,7 @@
         "unsupported_inferences": [],
         "validation": {
           "findings": [],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID"
         }
       },
@@ -5596,6 +6032,7 @@
             "retrieval_evidence": [
               {
                 "channel": "normalized_lookup",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampleAlpha",
                 "rank": 1,
@@ -5670,8 +6107,36 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [
+            {
+              "assertion_sources": [],
+              "kind": "EQUIVALENCE",
+              "predicates": [],
+              "source": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              }
+            }
+          ],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -5686,11 +6151,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-A4B62FB1C34B8620E7EBB85A6435889B",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-E7C92D8920B407181036E4E151E968EB",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-F1CDE1DDA8F49472CA34A817C60D67ED",
+      "mapping_key": "MAP-A47DCBF127C85D22BA6C7A6BEFFE80F5",
       "proposal": {
         "analysis_level_concept": {
           "concept_class": "IN",
@@ -5714,10 +6179,11 @@
           "route": "oral"
         },
         "rationale": "selected 1001 (ExampleAlpha) from IN 1001",
+        "refinement": null,
         "relationship_to_source": "EXACT",
         "requested_human_review": false,
-        "sau_id": "SAU-A4B62FB1C34B8620E7EBB85A6435889B",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-E7C92D8920B407181036E4E151E968EB",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -5789,12 +6255,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-F1CDE1DDA8F49472CA34A817C60D67ED",
+        "mapping_key": "MAP-A47DCBF127C85D22BA6C7A6BEFFE80F5",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "examplealpha",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -5808,15 +6277,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -5834,8 +6304,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-A4B62FB1C34B8620E7EBB85A6435889B",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-E7C92D8920B407181036E4E151E968EB",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -5858,10 +6328,10 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID"
       }
     },
@@ -5884,7 +6354,7 @@
       }
     ],
     "row_number": 12,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "  ExampleAlpha\t ",
     "status": "success"
   },
@@ -5932,12 +6402,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -5967,55 +6438,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "selected 1001 (ExampleAlpha) from IN 1001",
         "record_id": "synthetic-row-13",
+        "refinement": null,
         "relationship_to_source": "EXACT",
         "routing_features": {
           "channel_agreement": 1,
@@ -6044,8 +6528,8 @@
           "exact mapping with no validator findings"
         ],
         "routing_status": "AUTO_ACCEPT",
-        "sau_id": "SAU-14356FDFB33E9247C5951982C5D30413",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-D518D45E3BEF58C559A261E002CA35D7",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -6071,7 +6555,7 @@
         "unsupported_inferences": [],
         "validation": {
           "findings": [],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID"
         }
       },
@@ -6095,6 +6579,7 @@
             "retrieval_evidence": [
               {
                 "channel": "terminology_approximate_current",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampelAlpha",
                 "rank": 1,
@@ -6169,8 +6654,36 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [
+            {
+              "assertion_sources": [],
+              "kind": "EQUIVALENCE",
+              "predicates": [],
+              "source": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "1001",
+                "label": "ExampleAlpha",
+                "vocabulary": "RxNorm"
+              }
+            }
+          ],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -6185,11 +6698,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-14356FDFB33E9247C5951982C5D30413",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-D518D45E3BEF58C559A261E002CA35D7",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-2D4F2F95AADE7D81705914D0EA7904A3",
+      "mapping_key": "MAP-12687326B3269E95A172BAFDD4B99DA9",
       "proposal": {
         "analysis_level_concept": {
           "concept_class": "IN",
@@ -6213,10 +6726,11 @@
           "route": "oral"
         },
         "rationale": "selected 1001 (ExampleAlpha) from IN 1001",
+        "refinement": null,
         "relationship_to_source": "EXACT",
         "requested_human_review": false,
-        "sau_id": "SAU-14356FDFB33E9247C5951982C5D30413",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-D518D45E3BEF58C559A261E002CA35D7",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -6288,12 +6802,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-2D4F2F95AADE7D81705914D0EA7904A3",
+        "mapping_key": "MAP-12687326B3269E95A172BAFDD4B99DA9",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "exampelalpha",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -6307,15 +6824,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -6333,8 +6851,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-14356FDFB33E9247C5951982C5D30413",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-D518D45E3BEF58C559A261E002CA35D7",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -6357,10 +6875,10 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID"
       }
     },
@@ -6383,7 +6901,7 @@
       }
     ],
     "row_number": 13,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampelAlpha",
     "status": "success"
   },
@@ -6408,7 +6926,7 @@
       }
     ],
     "row_number": 14,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleMissingSnapshot",
     "status": "error"
   },
@@ -6456,12 +6974,13 @@
               "top_p": 1.0
             },
             "model_checkpoint": null,
-            "model_name": "drug_normalization_rules@0.2.0",
+            "model_name": "rules@0.5.0",
             "prompt_version": null
           },
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": {
             "attempts": [
               {
@@ -6491,55 +7010,68 @@
             }
           ],
           "retriever_version": "0.1.0",
-          "routing_policy_version": "0.2.0",
+          "routing_policy_version": "0.3.0",
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
-          "validation_rules_version": "0.1.0+drug_semantics@0.1.0",
+          "validation_rules_version": "0.1.0+drug.semantics@0.1.0",
           "workflow": {
-            "target_spec": "rxnorm@1.0",
-            "target_spec_sha256": "37d2ab62cb7261dac7aefd24846f86e5996b7b2c1f9700cd2ad5f14241a5b4f2",
+            "target_spec": "rxnorm@1.1",
+            "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469",
             "tiers": [
               {
                 "name": "default",
                 "operators": [
                   {
-                    "kind": "retrieve",
-                    "op_id": "rxnav",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "fuse",
-                    "op_id": "knowledge_package",
-                    "options": {},
-                    "version": "0.1.0"
-                  },
-                  {
-                    "kind": "propose",
-                    "op_id": "adjudicator:deterministic",
+                    "kind": "match",
+                    "op_id": "drug.rxnav",
                     "options": {
-                      "model": "drug_normalization_rules@0.2.0"
+                      "approximate_match": true,
+                      "exact_lookup": true,
+                      "include_historical": true
                     },
+                    "uses_model": false,
                     "version": "0.1.0"
+                  },
+                  {
+                    "kind": "link",
+                    "op_id": "standard",
+                    "options": {
+                      "concordance": false,
+                      "merge": "priority"
+                    },
+                    "uses_model": false,
+                    "version": "0.2.0"
+                  },
+                  {
+                    "kind": "resolve",
+                    "op_id": "rules",
+                    "options": {},
+                    "uses_model": false,
+                    "version": "0.5.0"
                   }
                 ]
               }
             ],
             "validators": [
               {
-                "kind": "validate",
-                "op_id": "drug_semantics",
-                "options": {},
+                "kind": "check",
+                "op_id": "drug.semantics",
+                "options": {
+                  "flag_salt_active_moiety_conflation": true,
+                  "preserve_combination_ingredients": true
+                },
+                "uses_model": false,
                 "version": "0.1.0"
               }
             ],
-            "workflow_id": "d671906c3b1cf093"
+            "workflow_id": "b31ccc9dc38f7a38"
           }
         },
         "rationale": "selected 1002 (ExampleBeta) from IN 1002",
         "record_id": "synthetic-row-15",
+        "refinement": null,
         "relationship_to_source": "EXACT",
         "routing_features": {
           "channel_agreement": 1,
@@ -6568,8 +7100,8 @@
           "exact terminology or official synonym match on an active concept"
         ],
         "routing_status": "AUTO_ACCEPT",
-        "sau_id": "SAU-1621AEAB2D5943A6728356DC1EAB8765",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-281DC325A71B133BB50C8930CB17F6C8",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -6595,7 +7127,7 @@
         "unsupported_inferences": [],
         "validation": {
           "findings": [],
-          "rules_version": "0.1.0+drug_semantics@0.1.0",
+          "rules_version": "0.1.0+drug.semantics@0.1.0",
           "status": "VALID"
         }
       },
@@ -6619,6 +7151,7 @@
             "retrieval_evidence": [
               {
                 "channel": "normalized_lookup",
+                "from_model_suggestion": false,
                 "provider": "rxnav",
                 "query": "ExampleBeta",
                 "rank": 1,
@@ -6693,8 +7226,36 @@
         "conflicts": [],
         "extensions": {},
         "kg_guidance": [],
-        "links": null,
+        "links": {
+          "ambiguous": [],
+          "granularity": "ingredient",
+          "links": [
+            {
+              "assertion_sources": [],
+              "kind": "EQUIVALENCE",
+              "predicates": [],
+              "source": {
+                "concept_code": "1002",
+                "label": "ExampleBeta",
+                "vocabulary": "RxNorm"
+              },
+              "target": {
+                "concept_code": "1002",
+                "label": "ExampleBeta",
+                "vocabulary": "RxNorm"
+              },
+              "via": {
+                "concept_code": "1002",
+                "label": "ExampleBeta",
+                "vocabulary": "RxNorm"
+              }
+            }
+          ],
+          "target_spec": "rxnorm@1.1",
+          "target_spec_sha256": "6249a7e8648b18a30613fcbebed4405bf5bc57f76c285083c5d63ea91de3a469"
+        },
         "ontology_guidance": [],
+        "refinement": null,
         "resource_provenance": [
           {
             "accessed_at": "<accessed_at>",
@@ -6709,11 +7270,11 @@
             "terminology_release": "synthetic-rxnorm-v1"
           }
         ],
-        "sau_id": "SAU-1621AEAB2D5943A6728356DC1EAB8765",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-281DC325A71B133BB50C8930CB17F6C8",
+        "schema_version": "0.4.0",
         "umls_guidance": []
       },
-      "mapping_key": "MAP-5CEE96112EC5C932F834E33438064E77",
+      "mapping_key": "MAP-B8B4A1DD10C195A68B31A1F91E8CE0F0",
       "proposal": {
         "analysis_level_concept": {
           "concept_class": "IN",
@@ -6737,10 +7298,11 @@
           "route": "oral"
         },
         "rationale": "selected 1002 (ExampleBeta) from IN 1002",
+        "refinement": null,
         "relationship_to_source": "EXACT",
         "requested_human_review": false,
-        "sau_id": "SAU-1621AEAB2D5943A6728356DC1EAB8765",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-281DC325A71B133BB50C8930CB17F6C8",
+        "schema_version": "0.4.0",
         "selected_concepts": [
           {
             "concept_class": "IN",
@@ -6812,12 +7374,15 @@
           "unit": null
         },
         "extensions": {},
-        "mapping_key": "MAP-5CEE96112EC5C932F834E33438064E77",
+        "mapping_key": "MAP-B8B4A1DD10C195A68B31A1F91E8CE0F0",
         "mention": {
           "detection_method": "user_specified",
           "end": null,
+          "extractor": "source_field",
+          "fidelity": "verbatim",
           "normalized_text": "examplebeta",
           "retrieval_text": null,
+          "retrieval_text_from_model": false,
           "semantic_types": [
             "drug_product"
           ],
@@ -6831,15 +7396,16 @@
           "identifier_hmac_key_fingerprint": null,
           "memo": null,
           "model": null,
+          "model_calls": [],
           "package_version": "0.1.0.dev0",
           "profile_name": "faers_drug_normalization",
-          "profile_version": "0.1.0",
+          "profile_version": "0.2.0",
           "resolution": null,
           "resources": [],
           "retriever_version": null,
           "routing_policy_version": null,
           "run_id": "<run_id>",
-          "schema_version": "0.3.0",
+          "schema_version": "0.4.0",
           "source_adapter": "structured_field",
           "source_adapter_version": "0.1.0",
           "validation_rules_version": null,
@@ -6857,8 +7423,8 @@
             "context not supplied: dose, drug_role, formulation, indication"
           ]
         },
-        "sau_id": "SAU-1621AEAB2D5943A6728356DC1EAB8765",
-        "schema_version": "0.3.0",
+        "sau_id": "SAU-281DC325A71B133BB50C8930CB17F6C8",
+        "schema_version": "0.4.0",
         "source": {
           "column_name": null,
           "extensions": {},
@@ -6881,10 +7447,10 @@
           "target_terminology": "RxNorm"
         }
       },
-      "schema_version": "0.3.0",
+      "schema_version": "0.4.0",
       "validation": {
         "findings": [],
-        "rules_version": "0.1.0+drug_semantics@0.1.0",
+        "rules_version": "0.1.0+drug.semantics@0.1.0",
         "status": "VALID"
       }
     },
@@ -6907,7 +7473,7 @@
       }
     ],
     "row_number": 15,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleBeta",
     "status": "success"
   },
@@ -6932,7 +7498,7 @@
       }
     ],
     "row_number": 16,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": null,
     "status": "error"
   },
@@ -6957,7 +7523,7 @@
       }
     ],
     "row_number": 17,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleAlpha",
     "status": "error"
   },
@@ -6982,7 +7548,7 @@
       }
     ],
     "row_number": 18,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleAlpha",
     "status": "error"
   },
@@ -7007,7 +7573,7 @@
       }
     ],
     "row_number": 19,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": "ExampleAlpha",
     "status": "error"
   },
@@ -7032,7 +7598,7 @@
       }
     ],
     "row_number": 20,
-    "schema_version": "0.3.0",
+    "schema_version": "0.4.0",
     "source_value": null,
     "status": "error"
   }

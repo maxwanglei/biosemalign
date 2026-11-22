@@ -1,0 +1,1 @@
+"""Hierarchy target spec resources."""

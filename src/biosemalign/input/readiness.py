@@ -30,8 +30,14 @@ def assess_readiness(
 
     present = _present_fields(envelope, attributes)
 
-    missing_required = [f for f in profile.input.required_context if f not in present]
-    missing_optional = [f for f in profile.input.optional_context if f not in present]
+    effective_fields = profile.effective_context_fields()
+    missing_required = [f.name for f in effective_fields if f.required and f.name not in present]
+    optional_source = profile.context.fields or effective_fields
+    missing_optional = [
+        f.name
+        for f in optional_source
+        if not f.required and f.use != ["key"] and f.name not in present
+    ]
 
     warnings: list[str] = []
     if missing_optional:
@@ -55,13 +61,13 @@ def assess_readiness(
 
 
 def _present_fields(envelope: ContextEnvelope, attributes: ContextualAttributes) -> set[str]:
-    """Field names carrying a usable value, across both context objects."""
+    """Field names carrying a usable value across declared slots and extensions."""
     present: set[str] = set()
     for model in (envelope, attributes):
-        for name, value in model.model_dump(exclude={"extensions"}).items():
-            if name == "neighboring_fields":
-                present.update(k for k, v in (value or {}).items() if v is not None)
-                continue
+        for name, value in model.model_dump(exclude={"extensions", "neighboring_fields"}).items():
             if value is not None and value != "" and value != {}:
                 present.add(name)
+        for key, value in model.extensions.items():
+            if value is not None and value != "" and value != {}:
+                present.add(key)
     return present

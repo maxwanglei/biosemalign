@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterable, Sequence
 
 from pydantic import Field
 
-from biosemalign.enums import RoutingStatus
+from biosemalign.enums import Authority, RoutingStatus
 from biosemalign.schemas.artifact import AlignmentArtifact
 from biosemalign.schemas.base import BioSemAlignModel
 from biosemalign.schemas.decision import AlignmentDecision
@@ -30,6 +30,7 @@ __all__ = [
     "EvaluationPrediction",
     "EvaluationReport",
     "GoldMapping",
+    "ModelAgreementMetrics",
     "RetrievalMetrics",
     "SelectiveMetrics",
     "decision_case_id",
@@ -62,7 +63,9 @@ class EvaluationPrediction(BioSemAlignModel):
             exclude={"extensions", "neighboring_fields"},
         )
         context.update(artifact.sau.context.neighboring_fields)
+        context.update(artifact.sau.context.extensions)
         context.update(envelope)
+        context.update(artifact.sau.attributes.extensions)
         context.update(
             artifact.sau.attributes.model_dump(
                 mode="json",
@@ -194,6 +197,32 @@ class CumulativeTier(BioSemAlignModel):
         }
 
 
+class ModelAgreementMetrics(BioSemAlignModel):
+    """Per-tier agreement between model statements and terminology evidence (§5.10)."""
+
+    tier: str
+    calls: int
+    evaluated_calls: int
+    agreements: int
+    disagreements: int
+
+    @property
+    def agreement_rate(self) -> float | None:
+        return self.agreements / self.evaluated_calls if self.evaluated_calls else None
+
+    def as_dict(self) -> dict[str, int | float | str | None]:
+        return {
+            "tier": self.tier,
+            "calls": self.calls,
+            "evaluated_calls": self.evaluated_calls,
+            "agreements": self.agreements,
+            "disagreements": self.disagreements,
+            "agreement_rate": (
+                round(self.agreement_rate, 4) if self.agreement_rate is not None else None
+            ),
+        }
+
+
 class EvaluationReport(BioSemAlignModel):
     """One-to-one accounting plus aggregate and category-level metrics."""
 
@@ -206,6 +235,7 @@ class EvaluationReport(BioSemAlignModel):
     tiers: dict[str, CategoryMetrics] = Field(default_factory=dict)
     cumulative_tiers: list[CumulativeTier] = Field(default_factory=list)
     strata: dict[str, CategoryMetrics] = Field(default_factory=dict)
+    model_agreement: dict[str, ModelAgreementMetrics] = Field(default_factory=dict)
 
     @property
     def stratum_disparity(self) -> dict[str, float] | None:
@@ -246,6 +276,9 @@ class EvaluationReport(BioSemAlignModel):
             "cumulative_tiers": [tier.as_dict() for tier in self.cumulative_tiers],
             "strata": {name: metrics.as_dict() for name, metrics in sorted(self.strata.items())},
             "stratum_disparity": self.stratum_disparity,
+            "model_agreement": {
+                name: metrics.as_dict() for name, metrics in sorted(self.model_agreement.items())
+            },
         }
 
 
@@ -424,7 +457,35 @@ def evaluate_predictions(
             stratum: _category_metrics(cases, prediction_by_id)
             for stratum, cases in by_stratum.items()
         },
+        model_agreement=_model_agreement_by_tier(gold_list, prediction_by_id),
     )
+
+
+def _model_agreement_by_tier(
+    gold_list: Sequence[GoldMapping], predictions: dict[str, EvaluationPrediction]
+) -> dict[str, ModelAgreementMetrics]:
+    """Summarize model agreement with terminology evidence per resolving tier."""
+    counts: dict[str, dict[str, int]] = {}
+    for gold in gold_list:
+        prediction = predictions.get(gold.case_id)
+        if prediction is None:
+            continue
+        decision = prediction.decision
+        for call in decision.provenance.model_calls:
+            tier = call.tier or resolving_tier(decision)
+            bucket = counts.setdefault(
+                tier, {"calls": 0, "evaluated_calls": 0, "agreements": 0, "disagreements": 0}
+            )
+            bucket["calls"] += 1
+            if call.agrees_with_terminology is True:
+                bucket["evaluated_calls"] += 1
+                bucket["agreements"] += 1
+            elif call.agrees_with_terminology is False:
+                bucket["evaluated_calls"] += 1
+                bucket["disagreements"] += 1
+    return {
+        tier: ModelAgreementMetrics(tier=tier, **bucket) for tier, bucket in sorted(counts.items())
+    }
 
 
 def resolving_tier(decision: AlignmentDecision) -> str:
@@ -508,7 +569,11 @@ def recall_at_k(
         found_at: int | None = None
 
         for position, candidate in enumerate(package.candidates, start=1):
-            reachable = {candidate.candidate_id} | {s.object_id for s in candidate.relationships}
+            reachable = {candidate.candidate_id} | {
+                s.object_id
+                for s in candidate.relationships
+                if s.authority is not Authority.LLM_INTERNAL_KNOWLEDGE
+            }
             if expected & reachable:
                 found_at = position
                 break

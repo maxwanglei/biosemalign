@@ -12,6 +12,8 @@ needs adjudications to exist first.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from biosemalign.enums import (
     DecisionType,
     RelationshipType,
@@ -19,14 +21,37 @@ from biosemalign.enums import (
     RoutingStatus,
     ValidationStatus,
 )
+from biosemalign.plugins import ensure_plugins_loaded
 from biosemalign.profiles.schema import TaskProfile
-from biosemalign.routing.features import has_unresolved_salt
 from biosemalign.schemas.decision import AlignmentProposal, RoutingFeatures, ValidationResult
 from biosemalign.schemas.knowledge import KnowledgePackage
 
-__all__ = ["ROUTING_POLICY_VERSION", "route_decision"]
+__all__ = [
+    "ROUTING_POLICY_VERSION",
+    "RoutingRuleHook",
+    "register_routing_rule_hook",
+    "route_decision",
+    "unregister_routing_rule_hook",
+]
 
-ROUTING_POLICY_VERSION = "0.2.0"
+RoutingRuleHook = Callable[
+    [AlignmentProposal, ValidationResult, RoutingFeatures, KnowledgePackage, TaskProfile],
+    list[str],
+]
+_ROUTING_RULE_HOOKS: dict[str, RoutingRuleHook] = {}
+
+
+def register_routing_rule_hook(name: str, hook: RoutingRuleHook) -> None:
+    """Register domain-specific routing review triggers."""
+    _ROUTING_RULE_HOOKS[name] = hook
+
+
+def unregister_routing_rule_hook(name: str) -> None:
+    """Remove a registered domain routing hook."""
+    _ROUTING_RULE_HOOKS.pop(name, None)
+
+
+ROUTING_POLICY_VERSION = "0.3.0"
 
 _EXACT_CHANNELS = frozenset({RetrievalChannel.EXACT_LOOKUP, RetrievalChannel.NORMALIZED_LOOKUP})
 
@@ -94,7 +119,7 @@ def route_decision(
 
     # --- profile-driven review triggers ---
     if not features.concept_is_active and (
-        profile.validation.require_active_concept or routing.historical_candidate_requires_review
+        profile.target.require_active_concept or routing.historical_candidate_requires_review
     ):
         reasons.append(
             "a final concept is not current or was not verified active in the target terminology"
@@ -105,7 +130,7 @@ def route_decision(
 
     # Two target concepts that each carry the mention as an exact name are a
     # homonym, not a match; ranking would only pick one by tie-break.
-    target = profile.task.target_terminology.casefold()
+    target = profile.target.terminology.casefold()
     exact_targets = {
         candidate.candidate_id
         for candidate in package.candidates
@@ -114,25 +139,12 @@ def route_decision(
     if len(exact_targets) > 1:
         reasons.append(
             f"the mention is an exact name of {len(exact_targets)} "
-            f"{profile.task.target_terminology} concepts: {', '.join(sorted(exact_targets))}"
+            f"{profile.target.terminology} concepts: {', '.join(sorted(exact_targets))}"
         )
 
-    if routing.unresolved_salt_ambiguity_requires_review:
-        source_id = (
-            proposal.source_level_concept.concept_id
-            if proposal.source_level_concept is not None
-            else None
-        )
-        source_vocabulary = profile.task.source_vocabulary(
-            proposal.source_level_concept.vocabulary
-            if proposal.source_level_concept is not None
-            else None
-        )
-        if has_unresolved_salt(package, source_id, source_vocabulary):
-            reasons.append(
-                "the source names a product with more than one reachable precise "
-                "ingredient; the salt form is unresolved"
-            )
+    ensure_plugins_loaded()
+    for hook in _ROUTING_RULE_HOOKS.values():
+        reasons.extend(hook(proposal, validation, features, package, profile))
 
     # A match resting only on fuzzy scoring needs lexical corroboration before
     # it is accepted without a person looking at it.
@@ -164,7 +176,7 @@ def route_decision(
         )
         source = (
             package.candidate_by_qualified_id(
-                profile.task.source_vocabulary(
+                profile.target.source_vocabulary(
                     proposal.source_level_concept.vocabulary
                     if proposal.source_level_concept is not None
                     else None
@@ -181,7 +193,7 @@ def route_decision(
                     for selected in proposal.selected_concepts
                     if (
                         candidate := package.candidate_by_qualified_id(
-                            profile.task.target_terminology, selected.concept_id
+                            profile.target.terminology, selected.concept_id
                         )
                     )
                     is not None
@@ -200,6 +212,30 @@ def route_decision(
         and features.relationship_type is RelationshipType.EXACT
     ):
         reasons.append("profile disables automatic acceptance of all EXACT mappings")
+
+    # G10 / M4: a candidate reached solely via model suggestion (written query text,
+    # model-backed matcher, or model-backed expander) is never auto-accepted.
+    selected_source = None
+    if proposal.source_level_concept is not None:
+        selected_source = package.candidate_by_qualified_id(
+            profile.target.source_vocabulary(proposal.source_level_concept.vocabulary),
+            proposal.source_level_concept.concept_id,
+        )
+    if selected_source is None:
+        for selected in proposal.selected_concepts:
+            selected_source = package.candidate_by_qualified_id(
+                profile.target.terminology, selected.concept_id
+            )
+            if selected_source is not None:
+                break
+    if (
+        selected_source is not None
+        and selected_source.retrieval_evidence
+        and all(evidence.from_model_suggestion for evidence in selected_source.retrieval_evidence)
+    ):
+        reasons.append(
+            "selected candidate was reached through a model suggestion and requires human review"
+        )
 
     if reasons:
         return RoutingStatus.HUMAN_REVIEW, reasons

@@ -74,13 +74,14 @@ log = get_logger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class LexiconEdge:
-    """One outgoing relationship of a concept, its object vocabulary-qualified."""
+    """One relationship of a concept inside its vocabulary family."""
 
     subject: str
     predicate: str
     object_vocabulary: str
     object_code: str
     assertion_source: str | None = None
+    subject_vocabulary: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +173,7 @@ class LexiconStore:
         self._concept_cache: OrderedDict[Any, Any] = OrderedDict()
         self._names_cache: OrderedDict[Any, Any] = OrderedDict()
         self._relationship_cache: OrderedDict[Any, Any] = OrderedDict()
+        self._incoming_relationship_cache: OrderedDict[Any, Any] = OrderedDict()
         self._key_cache: OrderedDict[Any, Any] = OrderedDict()
         self._predicate_cache: OrderedDict[Any, Any] = OrderedDict()
         self._corpus_cache: OrderedDict[Any, Any] = OrderedDict()
@@ -438,6 +440,47 @@ class LexiconStore:
             )
         return edges
 
+    def incoming_relationships(
+        self, vocabulary_id: str, codes: Iterable[str], predicates: Sequence[str]
+    ) -> list[LexiconEdge]:
+        """Incoming edges pointing to ``(vocabulary_id, code)`` from within its family."""
+        wanted = set(predicates)
+        if not wanted:
+            return []
+        family = list(self.family(vocabulary_id))
+        source = "assertion_source" if self._edge_source_column else "NULL"
+        edges: list[LexiconEdge] = []
+        for code in sorted(set(codes)):
+
+            def load(code: str = code) -> list[tuple[str, str, str, str | None]]:
+                return [
+                    (str(subject_vocab), str(subject_code), str(predicate), asserted)
+                    for subject_vocab, subject_code, predicate, asserted in self._rows(
+                        f"SELECT vocabulary_id_1, concept_code_1, predicate, {source} "
+                        "FROM relationships WHERE vocabulary_id_2 = ? AND concept_code_2 = ? "
+                        "AND list_contains(?::VARCHAR[], vocabulary_id_1) "
+                        "ORDER BY predicate, vocabulary_id_1, concept_code_1",
+                        [vocabulary_id, code, family],
+                    )
+                ]
+
+            incoming = self._memoized(
+                self._incoming_relationship_cache, (vocabulary_id, code), load
+            )
+            edges.extend(
+                LexiconEdge(
+                    subject=subject_code,
+                    predicate=predicate,
+                    object_vocabulary=vocabulary_id,
+                    object_code=code,
+                    assertion_source=asserted,
+                    subject_vocabulary=subject_vocab,
+                )
+                for subject_vocab, subject_code, predicate, asserted in incoming
+                if predicate in wanted
+            )
+        return edges
+
     def predicates(self, vocabulary_id: str) -> frozenset[str]:
         def load() -> frozenset[str]:
             return frozenset(
@@ -546,17 +589,19 @@ class LexiconProvider:
                 target = rows.get((edge.object_vocabulary, edge.object_code))
                 own = edge.object_vocabulary == self.vocabulary
                 extensions: dict[str, Any] = {
-                    "target_tty": target.concept_class if target else None,
                     "target_status": target.status if target else None,
                 }
                 if edge.assertion_source is not None:
                     extensions["assertion_source"] = edge.assertion_source
+                if hop > 1:
+                    extensions["step_subject_id"] = edge.subject
                 statements.append(
                     KnowledgeStatement(
                         subject_id=concept_id if hop > 1 else edge.subject,
                         predicate=edge.predicate,
                         object_id=edge.object_code,
                         object_vocabulary=None if own else edge.object_vocabulary,
+                        object_class=target.concept_class if target else None,
                         object_label=target.concept_name if target else None,
                         source_resource=self.vocabulary,
                         authority=Authority.OFFICIAL_CODING_RELATIONSHIP,
@@ -623,6 +668,38 @@ class LexiconProvider:
             )
             if all(existing is not candidate for existing in ordered):
                 ordered.append(candidate)
+        return ordered
+
+    def candidates_for_codes(
+        self,
+        codes: Sequence[str],
+        *,
+        channel: RetrievalChannel,
+        query: str,
+        provider_name: str | None = None,
+    ) -> list[CandidateConcept]:
+        """Build candidates for explicit concept codes in caller order."""
+        built = self._build(codes)
+        ordered: list[CandidateConcept] = []
+        seen: set[str] = set()
+        for rank, code in enumerate(codes, start=1):
+            if code in seen:
+                continue
+            candidate = built.get(code)
+            if candidate is None:
+                continue
+            seen.add(code)
+            candidate.retrieval_evidence.append(
+                RetrievalEvidence(
+                    channel=channel,
+                    query=query,
+                    provider=provider_name or self.provider_name,
+                    score=100.0,
+                    rank=rank,
+                    source_vocabulary=self.vocabulary,
+                )
+            )
+            ordered.append(candidate)
         return ordered
 
     def provenance(self) -> ResourceProvenance:

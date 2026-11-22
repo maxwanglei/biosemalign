@@ -71,6 +71,14 @@ class ResearchRunManifest(VersionedModel):
     memo_hits: int | None = Field(
         default=None, description="Decisions finalized from the persistent crosswalk memo."
     )
+    model_calls: int = Field(
+        default=0, ge=0, description="Language-model calls executed during this run (§5.10)."
+    )
+    model_cache_hits: int = Field(
+        default=0,
+        ge=0,
+        description="Language-model calls satisfied from the response cache (§5.10).",
+    )
     input_sha256: str
     output_sha256: dict[str, str] = Field(default_factory=dict)
     record_counts: dict[str, int] = Field(default_factory=dict)

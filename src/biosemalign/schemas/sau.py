@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import Field
 
-from biosemalign.enums import ReadinessStatus, SemanticType
+from biosemalign.enums import MentionFidelity, ReadinessStatus, SemanticType
 from biosemalign.schemas.base import BioSemAlignModel, ExtensibleModel, VersionedModel
 from biosemalign.schemas.provenance import Provenance
 from biosemalign.schemas.request import MappingTask
@@ -23,6 +23,7 @@ __all__ = [
     "Mention",
     "ReadinessAssessment",
     "SemanticAlignmentUnit",
+    "canonical_preserved_attributes",
 ]
 
 
@@ -39,6 +40,10 @@ class Mention(BioSemAlignModel):
             "claims such as EXACT are still judged against ``text``."
         ),
     )
+    retrieval_text_from_model: bool = Field(
+        default=False,
+        description="True when retrieval_text was written by a model-backed cleaner (M4, G10).",
+    )
     start: int | None = Field(default=None, description="Character offset into the source text.")
     end: int | None = None
     semantic_types: list[SemanticType] = Field(
@@ -52,6 +57,14 @@ class Mention(BioSemAlignModel):
     detection_method: str = Field(
         default="user_specified",
         description="How this span was identified, e.g. 'user_specified', 'profile_default'.",
+    )
+    extractor: str | None = Field(
+        default=None,
+        description="What produced the term, e.g. 'source_field', 'ner:<tool>', or 'llm:<model>'.",
+    )
+    fidelity: MentionFidelity | None = Field(
+        default=None,
+        description="Whether the term occurred verbatim, after normalization, or not in source text.",
     )
 
 
@@ -119,6 +132,15 @@ class ContextualAttributes(ExtensibleModel):
     assay_method: str | None = None
     unit: str | None = None
     experimental_system: str | None = None
+
+
+def canonical_preserved_attributes(attributes: ContextualAttributes) -> dict[str, Any]:
+    """All asserted attribute fields (named slots and non-None extensions) to preserve."""
+    preserved = attributes.model_dump(exclude_none=True, exclude={"extensions"})
+    for key, value in attributes.extensions.items():
+        if value is not None and value != "":
+            preserved[key] = value
+    return preserved
 
 
 class ReadinessAssessment(BioSemAlignModel):

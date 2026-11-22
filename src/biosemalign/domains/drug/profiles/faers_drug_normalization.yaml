@@ -1,0 +1,142 @@
+# FAERS reported drug-name normalization — Schema 2 (§5.8).
+#
+# Maps reported product strings such as "TOPROL XL 50 MG" to RxNorm, grouping at
+# ingredient level for disproportionality analysis while reporting exactly what
+# that grouping discards.
+
+profile_schema: 2
+profile_name: faers_drug_normalization
+profile_version: 0.2.0
+domain: drug
+workflow: mapping
+description: >-
+  Normalize FAERS reported product names to RxNorm ingredient-level concepts for
+  pharmacovigilance signal detection, preserving product-level detail and
+  reporting semantic loss.
+
+task:
+  operation: drug_normalization
+  mapping_intent: ingredient_level_analysis
+  relation_types:
+    - EXACT
+    - TARGET_BROADER_THAN_SOURCE
+    - TARGET_NARROWER_THAN_SOURCE
+    - COMPONENT_OF
+    - MULTIPLE_COMPONENTS_REQUIRED
+    - UNSUPPORTED_MAPPING
+    - INSUFFICIENT_CONTEXT
+
+target:
+  terminology: RxNorm
+  spec: rxnorm
+  level: ingredient
+  source_terminologies: []
+  require_active_concept: true
+
+input:
+  source_type: structured_field
+  default_semantic_type: drug_product
+  automatic_mention_detection: false
+
+context:
+  fields:
+    - name: route
+      aliases: [route_cod]
+      kind: attribute
+      use: [key, resolve, check]
+      required: false
+    - name: drug_role
+      aliases: [role_cod]
+      kind: context
+      use: []
+      required: false
+    - name: indication
+      aliases: [indi_pt]
+      kind: context
+      use: []
+      required: false
+    - name: dose
+      aliases: [dose_amt]
+      kind: attribute
+      use: [key, resolve, check]
+      required: false
+    - name: unit
+      aliases: [dose_unit]
+      kind: attribute
+      use: [key]
+      required: false
+    - name: formulation
+      aliases: [dose_form, dosage_form]
+      kind: attribute
+      use: [key, expand, resolve, check]
+      required: false
+
+knowledge:
+  resources:
+    - RxNorm
+
+  # NOTE: the design document's example profile lists `has_active_moiety`.
+  # RxNav rejects that predicate outright ("Path or Query Parameter error") —
+  # it is not in the list returned by /relatypes.json. The RxNorm relationship
+  # that carries active-moiety semantics is `has_boss` (basis of strength
+  # substance), used here instead.
+  allowed_relationships:
+    - has_ingredient
+    - has_precise_ingredient
+    - has_ingredients
+    - has_tradename
+    - has_dose_form
+    - consists_of
+    - has_boss
+
+  # Outcome-leakage guard (§6.2). During PHPT signal discovery the pipeline may
+  # use brand-to-ingredient structure but must never see drug-to-outcome
+  # associations, which would bias candidate discovery toward the hypothesis
+  # under test.
+  prohibited_relationships:
+    - associated_with_PHPT
+    - causes_hypercalcemia
+    - treats_PHPT
+    - may_treat
+    - may_prevent
+    - has_adverse_effect
+
+limits:
+  candidates: 10
+  members: 2000
+  enrichment_batch_size: 3
+
+tiers:
+  - name: default
+    clean: []
+    match:
+      - op: drug.rxnav
+        options:
+          exact_lookup: true
+          approximate_match: true
+          include_historical: true
+    link:
+      op: standard
+      options:
+        merge: priority
+        concordance: false
+    resolve: rules
+
+checks:
+  - op: drug.semantics
+    options:
+      preserve_combination_ingredients: true
+      flag_salt_active_moiety_conflation: true
+
+routing:
+  exact_synonym_auto_accept: true
+  combination_products_require_review: false
+  unresolved_salt_ambiguity_requires_review: true
+  historical_candidate_requires_review: true
+  # Calibrated against the golden set: "TOPROL XL 50 MG" scores 0.75 against
+  # its RxNorm label on shared tokens and "amoxicilin" scores 0.95 against
+  # "amoxicillin" on character similarity, while "ZZZQQQ NOT A DRUG 999"
+  # scores near zero against the nearest concept RxNav will offer.
+  minimum_lexical_similarity: 0.5
+  rejection_lexical_similarity: 0.3
+  calibration: null

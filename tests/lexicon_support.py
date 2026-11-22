@@ -184,48 +184,54 @@ def build_bundle(
     return bundle, build_lexicon(source, bundle, declaration=DECLARATION)
 
 
-def lexicon_profile(*, workflow: dict[str, Any] | None = None, **knowledge: Any) -> TaskProfile:
+def lexicon_profile(
+    *,
+    tiers: list[dict[str, Any]] | None = None,
+    resources: list[str] | None = None,
+    secondary_resources: list[str] | None = None,
+    **knowledge: Any,
+) -> TaskProfile:
     payload = load_profile("faers_drug_normalization").model_dump(mode="json")
+    payload["tiers"] = tiers
+    if resources is not None:
+        payload["knowledge"]["resources"] = list(resources)
+    elif secondary_resources is not None:
+        existing = list(payload["knowledge"].get("resources") or [])
+        payload["knowledge"]["resources"] = list(dict.fromkeys([*existing, *secondary_resources]))
     payload["knowledge"].update(knowledge)
-    if workflow is not None:
-        payload["workflow"] = workflow
     return TaskProfile.model_validate(payload)
 
 
-CONCORDANCE_WORKFLOW: dict[str, Any] = {
-    "tiers": [
-        {
-            "name": "concordant",
-            "retrievers": [
-                {
-                    "op": "lexicon",
-                    "options": {
-                        "vocabularies": ["RxNorm", "UNII", "MeSH", "UMLS"],
-                        "methods": ["exact"],
-                    },
-                }
-            ],
-            "fuser": {"op": "cross_vocab_concordance"},
-            "proposer": {"op": "concordant_exact"},
-        },
-        {
-            "name": "fallback",
-            "retrievers": [{"op": "lexicon", "options": {"vocabularies": ["RxNorm"]}}],
-        },
-    ]
-}
+CONCORDANCE_TIERS: list[dict[str, Any]] = [
+    {
+        "name": "concordant",
+        "match": [
+            {
+                "op": "exact",
+                "options": {"vocabularies": ["RxNorm", "UNII", "MeSH", "UMLS"]},
+            }
+        ],
+        "link": {"op": "standard", "options": {"concordance": True}},
+        "resolve": {"op": "concordant"},
+    },
+    {
+        "name": "fallback",
+        "match": [
+            {"op": "exact", "options": {"vocabularies": ["RxNorm"]}},
+            {"op": "lexical", "options": {"vocabularies": ["RxNorm"], "method": "trigram"}},
+        ],
+    },
+]
 
 
-def concordance_profile(**proposer_options: Any) -> TaskProfile:
-    workflow = {
-        "tiers": [dict(tier) for tier in CONCORDANCE_WORKFLOW["tiers"]],
-    }
-    if proposer_options:
-        workflow["tiers"][0] = {
-            **workflow["tiers"][0],
-            "proposer": {"op": "concordant_exact", "options": proposer_options},
+def concordance_profile(**resolver_options: Any) -> TaskProfile:
+    tiers = [dict(tier) for tier in CONCORDANCE_TIERS]
+    if resolver_options:
+        tiers[0] = {
+            **tiers[0],
+            "resolve": {"op": "concordant", "options": resolver_options},
         }
-    return lexicon_profile(workflow=workflow, secondary_resources=["UNII", "MeSH", "UMLS"])
+    return lexicon_profile(tiers=tiers, secondary_resources=["UNII", "MeSH", "UMLS"])
 
 
 def lexicon_pipeline(

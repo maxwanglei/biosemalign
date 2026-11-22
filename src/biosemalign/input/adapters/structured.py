@@ -128,7 +128,10 @@ def _as_optional_str(value: Any) -> str | None:
 
 
 def register_default_adapters() -> None:
-    """Register the built-in structured adapters."""
+    """Register the built-in structured and extracted-terms adapters."""
+    from biosemalign.input.adapters.extracted import ExtractedTermsAdapter
+
     register_adapter(SourceType.STRUCTURED_FIELD, StructuredFieldAdapter())
     register_adapter(SourceType.STRUCTURED_RECORD, StructuredRecordAdapter())
     register_adapter(SourceType.STRUCTURED_BATCH, StructuredBatchAdapter())
+    register_adapter(SourceType.EXTRACTED_TERMS, ExtractedTermsAdapter())
